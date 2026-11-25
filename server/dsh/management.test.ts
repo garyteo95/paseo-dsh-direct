@@ -38,6 +38,7 @@ function fixture(options: {
     },
   };
   let receivedSecret: string | undefined;
+  let receivedRef: string | undefined;
   const unsetRefs: string[] = [];
   let bundles: HostBundleInfo[] = [{ name: "safe-bundle", version: "1.0.0", enabled: false, installed: true, removable: true, update: "registry" }];
   const pluginCalls: unknown[][] = [];
@@ -45,7 +46,7 @@ function fixture(options: {
     settings,
     credentials: {
       describe: async () => ({ configured: true, writable: true, masked: "••••" }),
-      set: async (_ref: string, value: string) => { receivedSecret = value; if (options.credentialFailure) throw options.credentialFailure; },
+      set: async (ref: string, value: string) => { receivedRef = ref; receivedSecret = value; if (options.credentialFailure) throw options.credentialFailure; },
       unset: async (ref: string) => { unsetRefs.push(ref); },
     },
     llm: {
@@ -56,9 +57,13 @@ function fixture(options: {
       },
       listConfigurableProviders: () => [
         { provider: "current", displayName: "Current", settingsNs: "llm-pi-ai", settingsPath: ["providers", "current"] },
-        { provider: "candidate", displayName: "Candidate", settingsNs: "llm-pi-ai", settingsPath: ["providers", "candidate"] },
+        { provider: "candidate", displayName: "Candidate", settingsNs: "llm-pi-ai", settingsPath: ["providers", "candidate"], nativeAuth: { env: ["NATIVE_CANDIDATE_KEY"], oauth: false } },
+        { provider: "shared", displayName: "Shared", settingsNs: "llm-pi-ai", settingsPath: ["providers", "shared"], nativeAuth: { env: ["NATIVE_CANDIDATE_KEY"], oauth: false } },
       ],
-      discoverModels: async () => [{ id: "discovered" }],
+      discoverModels: async function () {
+        assert.equal(typeof this.listModels, "function", "native discovery must retain its service receiver");
+        return [{ id: "discovered" }];
+      },
     },
     agents: { list: () => [] },
     pluginManager: {
@@ -97,6 +102,7 @@ function fixture(options: {
   return {
     management: new DshManagement(ctx, "test"),
     receivedSecret: () => receivedSecret,
+    receivedRef: () => receivedRef,
     providers: () => structuredClone(providers),
     setProviders(value: Record<string, unknown>) { providers = value; },
     unsetRefs,
@@ -110,7 +116,7 @@ test("read separates configured routes from addable catalog rows and preserves d
   const view = await management.read();
   assert.equal(view.supported, true);
   assert.deepEqual(view.providers.map((row) => row.id), ["current"]);
-  assert.deepEqual(view.addableProviders.map((row) => row.id), ["candidate"]);
+  assert.deepEqual(view.addableProviders.map((row) => row.id), ["candidate", "shared"]);
   assert.equal(view.providers[0]?.models[0]?.id, "saved-model");
   assert.equal(view.providers[0]?.activeDependenciesKnown, false);
   assert.equal(view.credentialScope, "Shared DSH home credential store");
@@ -128,6 +134,41 @@ test("provider create and delete preserve an unrelated configured route", async 
     profile: "test", revision: created.view.revision, id: "candidate", confirmActiveSessions: true,
   });
   assert.deepEqual(removed.providers.map((provider) => provider.id), ["current"]);
+});
+
+test("new providers require models and custom routes require a protocol and endpoint", async () => {
+  const { management, providers } = fixture();
+  const before = await management.read();
+  const input = { profile: "test", revision: before.revision, id: "candidate", displayName: "Candidate", models: [], credential: { action: "keep" as const } };
+  await assert.rejects(() => management.upsert(input), /at least one model/);
+  await assert.rejects(() => management.upsert({ ...input, id: "custom", models: [{ id: "model" }] }), /protocol and base URL/);
+  assert.deepEqual(Object.keys(providers()), ["current"]);
+});
+
+test("native provider credential uses the catalogue's reference", async () => {
+  const { management, receivedRef, providers } = fixture();
+  const before = await management.read();
+  await management.upsert({
+    profile: "test", revision: before.revision, id: "candidate", displayName: "Candidate",
+    models: [{ id: "model" }], credential: { action: "set", apiKey: "synthetic-test-key" },
+  });
+  assert.equal(receivedRef(), "NATIVE_CANDIDATE_KEY");
+  assert.equal((providers().candidate as { apiKeyEnv: string }).apiKeyEnv, "NATIVE_CANDIDATE_KEY");
+});
+
+test("credential removal respects another provider's implicit native reference", async () => {
+  const { management, setProviders, unsetRefs } = fixture();
+  setProviders({
+    candidate: { displayName: "Candidate", models: [{ id: "model" }], apiKeyEnv: "NATIVE_CANDIDATE_KEY" },
+    shared: { displayName: "Shared", models: [{ id: "other-model" }] },
+  });
+  const before = await management.read();
+  const result = await management.upsert({
+    profile: "test", revision: before.revision, id: "candidate", displayName: "Candidate",
+    models: [{ id: "model" }], credential: { action: "unset" },
+  });
+  assert.equal(result.credentialApplied, "failed");
+  assert.deepEqual(unsetRefs, []);
 });
 
 test("provider write reports a credential-stage failure without returning the secret or losing unknown settings", async () => {

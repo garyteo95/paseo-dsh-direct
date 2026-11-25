@@ -4,11 +4,11 @@ DeepSeek Harness 设置页通过 Paseo Daemon 主机上的 DSH 原生服务管�
 
 ## 模型提供方与模型
 
-`Model providers` 读取 `llm-pi-ai` 的实际配置和 DSH 的 configurable-provider 目录。设置页优先显示 `Add a model API`，用同一表单填写协议、base URL、凭证和模型 ID；新建自定义 API 时直接显示密钥输入。完整 DSH provider 目录可按需展开，不默认列出。可新增、编辑和删除 provider，编辑模型的 ID、名称、context window、max output tokens、输入类型和 reasoning levels。provider ID 创建后保持稳定。目录支持时可读取 endpoint 的模型列表；不支持 discovery 时可手工维护模型。
+`Model providers` 读取 `llm-pi-ai` 的实际配置和 DSH 的 configurable-provider 目录。已安装的 Z.AI 与 OpenCode Go 入口优先显示，其他目录条目可按需展开；通用 `Add a custom model API` 仍可使用。新增 provider 必须配置至少一个模型，通用自定义 provider 还须填写协议和 base URL。新建目标 provider 时直接显示密钥输入。可新增、编辑和删除 provider，编辑模型的 ID、名称、context window、max output tokens、输入类型和 reasoning levels。provider ID 创建后保持稳定。目录支持时可读取模型列表；不支持 discovery 时可手工维护模型。
 
 配置写入带 DSH revision。并发修改会拒绝旧草稿；成功写入后页面重新读取 DSH 并刷新 Paseo 的 `dsh-pi` 模型目录。provider 设置属于 volatile 配置，活动 DSH 进程通过 HMR 收敛；页面只在 read-back 后报告设置已保存。删除 provider 时，短生命周期管理 bridge 无法证明其他 DSH 进程没有活动依赖，因此必须确认，正在运行的回合不应被中断。
 
-`Test` 使用 DSH 的 model discovery 检查 endpoint、协议、凭证和模型目录，不发送 inference 请求，因而不能证明指定模型能完成真实回合。错误只返回分类后的 invalid credential、unreachable endpoint、incompatible protocol、unavailable model、rate limit、unsupported 或 unknown。真实模型测试可能计费，须在用户授权后另行执行。
+`Check DSH model catalogue` 使用 DSH 的 model discovery 核对模型注册。已安装的 catalogue provider 可直接返回本地数据，不发网络请求；成功不证明 endpoint、凭证或 Coding Plan 权限可用。错误只返回分类后的 invalid credential、unreachable endpoint、incompatible protocol、unavailable model、rate limit、unsupported 或 unknown。真实模型测试可能计费，须在用户授权后另行执行。
 
 ## 凭证
 

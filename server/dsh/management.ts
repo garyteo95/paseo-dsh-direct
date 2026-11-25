@@ -104,6 +104,15 @@ function deriveKeyRef(id: string): string {
   return `${id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
 }
 
+function credentialRef(id: string, profile: Record<string, unknown>, directoryRow?: { nativeAuth?: { env: readonly string[] } }): string {
+  return text(profile.apiKeyEnv) ?? text(directoryRow?.nativeAuth?.env[0]) ?? deriveKeyRef(id);
+}
+
+function isProviderSettingsRow(row: { provider: string; settingsNs: string; settingsPath: readonly string[] }): boolean {
+  return row.settingsNs === SETTINGS_NS && row.settingsPath.length === 2 &&
+    row.settingsPath[0] === PROVIDERS_PATH && row.settingsPath[1] === row.provider;
+}
+
 function sanitize(error: unknown): string {
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string"
     ? error.code : undefined;
@@ -220,13 +229,13 @@ export class DshManagement {
     const llm = this.optional("llm");
     if (!snapshot) return this.unsupported("This DSH profile does not provide writable model-provider settings.");
     if (!llm?.listConfigurableProviders) return this.unsupported("This DSH runtime does not expose configurable model providers.");
-    const directory = llm.listConfigurableProviders().filter((row) => row.settingsNs === SETTINGS_NS);
+    const directory = llm.listConfigurableProviders().filter(isProviderSettingsRow);
     const directoryById = new Map(directory.map((row) => [row.provider, row]));
     const ids = Object.keys(snapshot.providers);
     const providers = await Promise.all(ids.map(async (id) => {
       const profile = object(snapshot.providers[id]);
       const directoryRow = directoryById.get(id);
-      const ref = text(profile.apiKeyEnv) ?? deriveKeyRef(id);
+      const ref = credentialRef(id, profile, directoryRow);
       const configuredModels = Array.isArray(profile.models) ? profile.models.map((raw) => {
         const model = object(raw);
         const id = text(model.id);
@@ -306,8 +315,15 @@ export class DshManagement {
   async upsert(input: ManagementUpsert): Promise<ProviderMutationResult> {
     const snapshot = this.requireSnapshot(input.profile, input.revision);
     const id = providerId(input.id);
+    const directory = this.optional("llm")?.listConfigurableProviders?.().filter(isProviderSettingsRow) ?? [];
+    const directoryById = new Map(directory.map((row) => [row.provider, row]));
+    const directoryRow = directoryById.get(id);
+    if (!Object.hasOwn(snapshot.providers, id) && input.models.length === 0) throw new Error("Add at least one model before saving a provider");
+    if (!Object.hasOwn(snapshot.providers, id) && !directoryRow && (!input.api || !input.baseURL)) {
+      throw new Error("Custom providers require an API protocol and base URL");
+    }
     const existing = object(snapshot.providers[id]);
-    const ref = text(existing.apiKeyEnv) ?? deriveKeyRef(id);
+    const ref = credentialRef(id, existing, directoryRow);
     const existingModels = new Map(
       (Array.isArray(existing.models) ? existing.models : [])
         .map((raw) => object(raw))
@@ -352,7 +368,8 @@ export class DshManagement {
       } else try {
         if (input.credential.action === "set") await credentials.set(ref, input.credential.apiKey);
         else {
-          if (Object.entries(snapshot.providers).some(([otherId, raw]) => otherId !== id && text(object(raw).apiKeyEnv) === ref)) {
+          if (Object.entries(snapshot.providers).some(([otherId, raw]) =>
+            otherId !== id && credentialRef(otherId, object(raw), directoryById.get(otherId)) === ref)) {
             throw Object.assign(new Error("Credential reference is shared"), { code: "CREDENTIAL_IN_USE" });
           }
           await credentials.unset(ref);
@@ -383,11 +400,11 @@ export class DshManagement {
 
   async discover(input: ModelDiscovery): Promise<{ models: ManagementView["providers"][number]["models"]; failure?: { ok: boolean; billable: boolean; category?: string; diagnostic?: string } }> {
     this.requireSnapshot(input.profile, input.revision);
-    const discover = this.optional("llm")?.discoverModels;
-    if (!discover) return { models: [], failure: { ok: false, billable: false, category: "unsupported", diagnostic: "Model discovery is unavailable." } };
+    const llm = this.optional("llm");
+    if (!llm?.discoverModels) return { models: [], failure: { ok: false, billable: false, category: "unsupported", diagnostic: "Model discovery is unavailable." } };
     try {
       const { profile: _profile, revision: _revision, ...request } = input;
-      const models = await discover(SETTINGS_NS, request);
+      const models = await llm.discoverModels(SETTINGS_NS, request);
       return { models: models.map((model) => ({
         id: model.id,
         ...(model.name ? { name: model.name } : {}),
@@ -404,9 +421,9 @@ export class DshManagement {
     const result = await this.discover(input);
     if (result.failure) return result.failure;
     if (input.model && !result.models.some((model) => model.id === input.model)) {
-      return { ok: false, billable: false, category: "unavailable-model" as const, diagnostic: "The endpoint did not advertise the requested model." };
+      return { ok: false, billable: false, category: "unavailable-model" as const, diagnostic: "DSH did not list the requested model." };
     }
-    return { ok: true, billable: false };
+    return { ok: true, billable: false, diagnostic: "DSH lists this model. The endpoint and credential were not verified." };
   }
 
   async readPlugins(): Promise<PluginsView> {

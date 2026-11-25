@@ -9,6 +9,7 @@ import type { ProviderConnection, ProviderLaunch } from "@getpaseo/plugin/server
 import { createSubagentSettingsAccess } from "./server/subagent-settings.js";
 import { readSubagentSettings, saveSubagentSettings } from "./shared/subagent-settings.js";
 import { createManagementAccess } from "./server/management.js";
+import { refreshDshModels, type PaseoModels } from "./server/model-catalog-refresh.js";
 import {
   cancelPluginOperation,
   discoverProviderModels,
@@ -56,11 +57,10 @@ export default function contribute(server: PluginServerContext) {
     }),
   });
   // Provider discovery supplies the same resolved command and environment used for sessions.
-  const refreshLaunch = async (paseo: import("@getpaseo/client").PaseoApi) => {
-    await paseo.providers.refresh({ providers: ["dsh-pi"] });
-    const result = await paseo.providers.listModels("dsh-pi");
-    if (result.error) throw new Error(result.error);
-  };
+  const refreshLaunch = async (
+    paseo: import("@getpaseo/client").PaseoApi,
+    matches?: (models: PaseoModels) => boolean,
+  ) => refreshDshModels(paseo.providers, matches);
   server.handle(readSubagentSettings, async (_input, { paseo }) => {
     await refreshLaunch(paseo);
     return subagents.read();
@@ -78,7 +78,13 @@ export default function contribute(server: PluginServerContext) {
   server.handle(upsertProvider, async (input, { paseo }) => {
     const result = await management.run("management.provider.upsert", input, true);
     try {
-      await refreshLaunch(paseo);
+      const includesSavedModels = (models: PaseoModels) =>
+        input.models.every((model) => models?.some((available) =>
+          available.metadata?.provider === input.id && available.metadata?.model === model.id));
+      const models = await refreshLaunch(paseo, includesSavedModels);
+      if (!includesSavedModels(models)) {
+        return { ...result, catalogRefreshed: false, catalogDiagnostic: "Provider saved, but its configured model is absent from the Paseo picker. Review the DSH provider configuration." };
+      }
       return { ...result, catalogRefreshed: true };
     } catch {
       return { ...result, catalogRefreshed: false, catalogDiagnostic: "Provider saved, but the Paseo model catalog could not refresh." };
@@ -87,7 +93,12 @@ export default function contribute(server: PluginServerContext) {
   server.handle(removeProvider, async (input, { paseo }) => {
     const view = await management.run("management.provider.remove", input, true);
     try {
-      await refreshLaunch(paseo);
+      const excludesRemovedProvider = (models: PaseoModels) =>
+        !models?.some((model) => model.metadata?.provider === input.id);
+      const models = await refreshLaunch(paseo, excludesRemovedProvider);
+      if (!excludesRemovedProvider(models)) {
+        return { view, catalogRefreshed: false, catalogDiagnostic: "Provider removed, but its models remain in the Paseo picker." };
+      }
       return { view, catalogRefreshed: true };
     } catch {
       return { view, catalogRefreshed: false, catalogDiagnostic: "Provider removed, but the Paseo model catalog could not refresh." };

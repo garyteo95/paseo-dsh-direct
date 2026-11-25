@@ -65,6 +65,7 @@ type ProviderRemoval = {
   launchRevision: string;
 };
 type PluginConfirm = { plugin: Plugin; action: "enable" | "disable" | "update" | "remove" };
+const PREFERRED_PROVIDER_IDS = new Set(["zai", "opencode-go"]);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -95,7 +96,7 @@ function providerDraft(
     api: provider?.api ?? "",
     baseURL: provider?.baseURL ?? addable?.defaultBaseURL ?? "",
     models: provider?.models.map((model) => ({ ...model })) ?? [],
-    credentialAction: !provider && !addable ? "set" : "keep",
+    credentialAction: !provider && (!addable || PREFERRED_PROVIDER_IDS.has(addable.id)) ? "set" : "keep",
     apiKey: "",
   };
 }
@@ -115,7 +116,7 @@ function modelDraft(model?: ManagedModel, index?: number): ModelDraft {
 }
 
 function providerProbeInput(draft: ProviderDraft) {
-  if (draft.credentialAction === "set" && !draft.apiKey) throw new Error("Enter the replacement API key");
+  if (draft.credentialAction === "set" && !draft.apiKey) throw new Error("Enter an API key");
   return {
     profile: draft.profile,
     revision: draft.revision,
@@ -189,6 +190,8 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
   });
   const management = managementQuery.data;
   const plugins = pluginsQuery.data;
+  const preferredProviders = management?.addableProviders.filter((provider) => PREFERRED_PROVIDER_IDS.has(provider.id)) ?? [];
+  const otherProviders = management?.addableProviders.filter((provider) => !PREFERRED_PROVIDER_IDS.has(provider.id)) ?? [];
 
   const [providerEditor, setProviderEditor] = useState<ProviderDraft | null>(null);
   const [showInstalledProviders, setShowInstalledProviders] = useState(false);
@@ -314,8 +317,11 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
     setProviderBusy("Saving provider");
     setProviderError(null);
     try {
-      if (providerEditor.custom && providerEditor.models.length === 0) throw new Error("Add at least one model");
-      if (providerEditor.credentialAction === "set" && !providerEditor.apiKey) throw new Error("Enter the replacement API key");
+      if (!providerEditor.originalId && providerEditor.models.length === 0) throw new Error("Add at least one model");
+      if (providerEditor.custom && (!providerEditor.api.trim() || !providerEditor.baseURL.trim())) {
+        throw new Error("Choose an API protocol and enter its base URL");
+      }
+      if (providerEditor.credentialAction === "set" && !providerEditor.apiKey) throw new Error("Enter an API key");
       const credential = providerEditor.credentialAction === "set"
         ? { action: "set" as const, apiKey: providerEditor.apiKey }
         : providerEditor.credentialAction === "unset"
@@ -332,13 +338,13 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
         credential,
       });
       queryClient.setQueryData(managementKey, result.view);
-      const notices = [
-        result.settingsApplied ? "settings applied" : "settings not applied",
-        result.credentialApplied === "not-requested" ? null : `credential ${result.credentialApplied}`,
-        result.catalogRefreshed === false ? `picker refresh failed${result.catalogDiagnostic ? `: ${result.catalogDiagnostic}` : ""}` : null,
-        result.diagnostic,
-      ].filter(Boolean).join(" · ");
-      setProviderFeedback(notices || "Provider saved and read back from DSH");
+      const feedback = [result.settingsApplied
+        ? "Provider settings were saved and read back from DSH."
+        : "Provider settings were not saved."];
+      if (result.credentialApplied === "failed") feedback.push("The API key was not updated; retry the key update.");
+      else if (result.credentialApplied === "applied") feedback.push("The API key was updated.");
+      if (result.catalogRefreshed === false) feedback.push(result.catalogDiagnostic ?? "The model did not appear in the Paseo picker.");
+      setProviderFeedback(feedback.join(" "));
       setProviderEditor((draft) => draft && ({
         ...draft,
         profile: result.view.profile,
@@ -390,10 +396,10 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
         ...probeConfirm.input,
         model: probeConfirm.model,
       });
-      const text = result.ok ? "Connection test succeeded" : `${result.category ?? "unknown"}: ${result.diagnostic ?? "Connection test failed"}`;
+      const text = result.ok ? result.diagnostic ?? "Model appears in the DSH catalogue" : `${result.category ?? "unknown"}: ${result.diagnostic ?? "Catalogue check failed"}`;
       setProviderFeedback(`${text}${result.billable ? " · The provider may bill this request" : ""}`);
       if (!result.ok) setProviderError(text);
-      else toast.show("Provider test succeeded", { variant: "success" });
+      else toast.show("DSH model catalogue checked", { variant: "success" });
     } catch (error) {
       setProviderError(errorMessage(error));
     } finally {
@@ -513,11 +519,11 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
           <SettingsAction key={`${model.id}-${index}`} label={model.name || model.id} hint={`${model.id}${model.contextWindow ? ` · ${model.contextWindow} context` : ""}${model.maxTokens ? ` · ${model.maxTokens} max output` : ""}${model.inputModalities?.length ? ` · ${model.inputModalities.join("+")}` : ""}${model.reasoningEfforts?.length ? ` · reasoning: ${model.reasoningEfforts.map((effort) => effort.id).join(", ")}` : ""}`} actionLabel="Edit" onPress={() => setModelEditor(modelDraft(model, index))} disabled={busy} />
         ))}
         <SettingsAction label="Add a model manually" actionLabel="Add" onPress={() => setModelEditor(modelDraft())} disabled={busy} />
-        <SettingsAction label="Fetch available models" hint="Updates this draft only; unsupported endpoints can use manual entry" actionLabel={providerBusy === "Discovering models" ? "Fetching" : "Review fetch"} onPress={() => reviewProbe("discover")} disabled={busy || !providerEditor.id.trim()} />
+        <SettingsAction label="Discover available models" hint="Updates this draft only; built-in providers may use DSH's local catalogue" actionLabel={providerBusy === "Discovering models" ? "Discovering" : "Review"} onPress={() => reviewProbe("discover")} disabled={busy || !providerEditor.id.trim()} />
         {probeConfirm?.kind === "discover" && <>
-          <SettingsRow label="Confirm credential destination" hint={`DSH will query ${probeConfirm.input.baseURL || "the selected provider's default endpoint"} and may use that provider's saved credential.${probeConfirm.input.apiKey ? " The new credential will be sent to that endpoint." : ""} No inference request is sent.`} />
-          <SettingsAction label="Fetch catalogue from this endpoint" actionLabel="Fetch" onPress={() => void discoverModels()} disabled={busy} />
-          <SettingsAction label="Cancel catalogue fetch" actionLabel="Cancel" onPress={() => setProbeConfirm(null)} disabled={busy} />
+          <SettingsRow label="Review model discovery" hint={`DSH may query ${probeConfirm.input.baseURL || "the selected provider's default endpoint"} or use its local catalogue.${probeConfirm.input.apiKey ? " A new credential may be sent to the endpoint." : " A saved credential may be used."} No inference request is sent.`} />
+          <SettingsAction label="Discover models" actionLabel="Discover" onPress={() => void discoverModels()} disabled={busy} />
+          <SettingsAction label="Cancel model discovery" actionLabel="Cancel" onPress={() => setProbeConfirm(null)} disabled={busy} />
         </>}
       </SettingsSection>
       {modelEditor && (
@@ -536,12 +542,12 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
       )}
       <SettingsSection theme={theme} title="Verify and save">
         {probeConfirm?.kind !== "test" ? (
-          <SettingsAction label="Test provider connection" hint="Asks the endpoint for its model catalogue; it does not run an inference request" actionLabel="Review test" onPress={() => reviewProbe("test")} disabled={busy || providerEditor.models.length === 0} />
+          <SettingsAction label="Check DSH model catalogue" hint="Built-in routes may use local metadata; success does not prove the endpoint or key works" actionLabel="Review check" onPress={() => reviewProbe("test")} disabled={busy || providerEditor.models.length === 0} />
         ) : (
           <>
-            <SettingsRow label="Endpoint catalogue check" hint={`DSH will query ${probeConfirm.input.baseURL || "the selected provider's default endpoint"} and verify that it advertises ${probeConfirm.model ?? "the configured model"}.${probeConfirm.input.apiKey ? " The new credential will be sent to that endpoint." : " The provider may use its saved credential."} A real inference test is separate and may be billable.`} />
-            <SettingsAction label="Run non-inference connection test" actionLabel="Run test" onPress={() => void runProviderTest()} disabled={busy} />
-            <SettingsAction label="Do not test" actionLabel="Cancel" onPress={() => setProbeConfirm(null)} disabled={busy} />
+            <SettingsRow label="Model catalogue check" hint={`DSH will check ${probeConfirm.model ?? "the configured model"} and may query ${probeConfirm.input.baseURL || "the selected provider endpoint"}.${probeConfirm.input.apiKey ? " The new credential may be sent to that endpoint." : " A saved credential may be used."} Built-in routes may use local metadata, so success does not prove endpoint access or account entitlement. A real inference test may be billable.`} />
+            <SettingsAction label="Check model registration" actionLabel="Check" onPress={() => void runProviderTest()} disabled={busy} />
+            <SettingsAction label="Cancel catalogue check" actionLabel="Cancel" onPress={() => setProbeConfirm(null)} disabled={busy} />
           </>
         )}
         {providerTargetChanged && <SettingsRow label="Connection settings changed" error="Discard this draft and reopen it for the current DSH target." />}
@@ -576,9 +582,10 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
           </SettingsCard>
         ))}
         {management?.supported && management.providers.every((provider) => !provider.configured) && <SettingsRow label="No configured model providers" hint="Configure the API connection and its model IDs below." />}
-        {management?.supported && <SettingsAction label="Add a model API" hint="Set the API protocol, endpoint, key and model IDs for Z.AI Coding Plan, OpenCode Go or another compatible service" actionLabel="Configure" onPress={() => startProviderEdit()} disabled={busy} />}
-        {management?.supported && management.addableProviders.length > 0 && <SettingsAction label="DSH provider catalogue" hint={showInstalledProviders ? "Hide available DSH providers" : "Optional: browse providers available from this DSH installation"} actionLabel={showInstalledProviders ? "Hide" : "Show"} onPress={() => setShowInstalledProviders((shown) => !shown)} disabled={busy} />}
-        {showInstalledProviders && management?.addableProviders.map((provider) => <SettingsAction key={provider.id} label={`Add ${provider.displayName}`} hint={provider.diagnostic ?? provider.id} actionLabel="Add" onPress={() => startProviderEdit(undefined, provider)} disabled={busy} />)}
+        {preferredProviders.map((provider) => <SettingsAction key={provider.id} label={`Add ${provider.displayName}`} hint={provider.defaultBaseURL ?? provider.diagnostic ?? provider.id} actionLabel="Add" onPress={() => startProviderEdit(undefined, provider)} disabled={busy} />)}
+        {management?.supported && <SettingsAction label="Add a custom model API" hint="Set the API protocol, endpoint, key and model IDs" actionLabel="Configure" onPress={() => startProviderEdit()} disabled={busy} />}
+        {management?.supported && otherProviders.length > 0 && <SettingsAction label="Other DSH providers" hint={showInstalledProviders ? "Hide available DSH providers" : "Optional: browse the remaining DSH provider catalogue"} actionLabel={showInstalledProviders ? "Hide" : "Show"} onPress={() => setShowInstalledProviders((shown) => !shown)} disabled={busy} />}
+        {showInstalledProviders && otherProviders.map((provider) => <SettingsAction key={provider.id} label={`Add ${provider.displayName}`} hint={provider.diagnostic ?? provider.id} actionLabel="Add" onPress={() => startProviderEdit(undefined, provider)} disabled={busy} />)}
         {providerFeedback && !providerEditor && <SettingsRow label="Last provider operation" hint={providerFeedback} />}
         {providerError && !providerEditor && <SettingsRow label="Provider operation failed" error={providerError} />}
         {managementQuery.isError && management && <SettingsRow label="Could not refresh model providers" error={errorMessage(managementQuery.error)} hint="The previous successful state is still shown" />}
