@@ -5,13 +5,14 @@ import SettingsSection from "./settings-section.js";
 import { useRef } from "react";
 import { DEFAULT_STARTUP_TIMEOUT_SECONDS, DSH_SETTINGS, MAX_STARTUP_TIMEOUT_SECONDS, type DshSettingsValues } from "../shared/settings.js";
 import SubagentSettings from "./subagent-settings.js";
+import ManagementSettings from "./management-settings.js";
 
 const EXECUTABLE_HINT = "DSH command or path; environment takes priority";
 const PROFILE_HINT = "Default: paseo, unless set by environment";
 const STARTUP_TIMEOUT_HINT = `Wait for the bridge ready signal after dsh starts; ${DEFAULT_STARTUP_TIMEOUT_SECONDS}s by default, up to ${MAX_STARTUP_TIMEOUT_SECONDS}s`;
 
 /** Edits the dsh executable, profile and startup timeout that the server reads when it launches a bridge. */
-export default function DshSettingsScreen({ theme }: PluginSurfaceProps) {
+export default function DshSettingsScreen({ theme, host }: PluginSurfaceProps) {
   const settings = useSettings(DSH_SETTINGS);
   const draftState = useRef<{ revision: string | undefined; edits: DshSettingsValues }>({
     revision: undefined,
@@ -109,6 +110,12 @@ export default function DshSettingsScreen({ theme }: PluginSurfaceProps) {
           disabled={settings.saving}
         />
       </SettingsSection>
+      <ManagementSettings
+        theme={theme}
+        host={host}
+        launchRevision={revision}
+        launchSaving={settings.saving}
+      />
       <SubagentSettings theme={theme} launchRevision={revision} launchSaving={settings.saving} />
     </ScrollView>
   );

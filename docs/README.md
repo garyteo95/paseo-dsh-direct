@@ -16,6 +16,8 @@ This index links the public usage guides and the repository's current implementa
 - [Server architecture](server-architecture.md)
 - [Client architecture](client-architecture.md)
 - [Plugin development and verification](plugin-guide.md)
+- [DSH management](dsh-management.md)
+- [DSH management acceptance](dsh-management-acceptance.md)
 - [Alpha acceptance](alpha-acceptance.md)
 
 The English pages are the concise release-facing guide. The Chinese pages contain the repository's fuller working notes. This directory describes current behavior; decisions and rationale belong under [`../.agents/notes/`](../.agents/notes/README.md).

@@ -77,6 +77,7 @@ export interface HostSettingsDescriptor {
   value: unknown;
   base?: unknown;
   user?: unknown;
+  schema?: unknown;
 }
 export interface HostSettings {
   readonly writable?: boolean;
@@ -84,12 +85,44 @@ export interface HostSettings {
   describe(options: { redactSecrets: true }): HostSettingsDescriptor[];
   mutate(
     ns: string,
-    ops: readonly { op: "set"; path: readonly string[]; value: unknown }[],
+    ops: readonly (
+      | { op: "set"; path: readonly string[]; value: unknown }
+      | { op: "unset"; path: readonly string[]; value?: never }
+    )[],
     expectedRevision: number,
   ): Promise<void>;
 }
+export interface HostCredentialInfo {
+  configured: boolean;
+  source?: string;
+  writable: boolean;
+  masked?: string;
+}
+export interface HostPluginChangeResult {
+  changed: boolean;
+  application: "applied" | "restart-required" | "overridden" | "failed" | "cancelled";
+  restartReason?: string;
+  error?: { code?: string; diagnostic?: string; message?: string };
+  requestId?: string;
+}
+export interface HostBundleInfo {
+  name: string;
+  version?: string;
+  description?: string;
+  enabled: boolean;
+  installed: boolean;
+  removable?: boolean;
+  update?: { version?: string } | string;
+  readOnlyReason?: string;
+  error?: unknown;
+}
 export interface HostServices {
   settings?: HostSettings;
+  credentials?: {
+    describe(ref: string): Promise<HostCredentialInfo> | HostCredentialInfo;
+    set(ref: string, value: string): Promise<void>;
+    unset(ref: string): Promise<void>;
+  };
   configEditor?: {
     configuration(): Array<{
       entry: { options: { id: string; config?: unknown } };
@@ -164,11 +197,47 @@ export interface HostServices {
       provider: string,
       model: string,
     ): Promise<{
+      context?: { contextWindow?: number };
+      defaultMaxTokens?: number;
       inputModalities?: readonly string[];
       reasoning?: {
         efforts?: Array<{ id: string; name: string; description?: string }>;
       };
     }>;
+    listConfigurableProviders?(): Array<{
+      provider: string;
+      displayName: string;
+      settingsNs: string;
+      settingsPath: readonly string[];
+      declared?: boolean;
+      defaultBaseURL?: string;
+      baseURLEnv?: readonly string[];
+      nativeAuth?: { env: readonly string[]; oauth: boolean };
+      error?: string;
+    }>;
+    discoverModels?(
+      settingsNs: string,
+      request: { provider?: string; baseURL?: string; api?: string; apiKey?: string },
+      signal?: AbortSignal,
+    ): Promise<Array<{
+      id: string;
+      name?: string;
+      contextWindow?: number;
+      maxTokens?: number;
+      inputModalities?: readonly string[];
+    }>>;
+  };
+  pluginManager?: {
+    listBundles(): Promise<readonly HostBundleInfo[]> | readonly HostBundleInfo[];
+    installBundle(spec: string, options: {
+      enabled?: boolean; saveExact?: boolean; requestId?: string;
+      approvedBuilds?: readonly string[]; registry?: string; expected?: unknown;
+    }): Promise<HostPluginChangeResult>;
+    waitForInstall(id: string): Promise<HostPluginChangeResult | null>;
+    cancelInstall(id: string): Promise<{ status: "cancelled" | "too-late" }>;
+    updateBundle(name: string, version: string | undefined, options: { registry?: string; spec?: string; requestId?: string }): Promise<HostPluginChangeResult>;
+    setBundleEnabled(name: string, enabled: boolean): Promise<HostPluginChangeResult>;
+    removeBundle(name: string): Promise<HostPluginChangeResult>;
   };
   agentDefaultModel: { currentSelection(): ModelSelection } | undefined;
   /**

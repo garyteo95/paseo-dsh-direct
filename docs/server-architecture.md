@@ -87,6 +87,10 @@ Paseo 在调用插件之前就按 `PATH` 解析注册的 `command`，找不到�
 
 每次写入同时保存开关和精确的 provider/model 列表。跨桥接的 token 是配置内容与源文件身份的 hash；保存先比较 token，再用当前桥接的 DSH revision 写入，由 DSH 文件锁内的重读与 revision 检查处理并发修改。DSH 自己记录新会话策略和子会话继承，插件不修改已有会话策略。
 
+### DSH 管理桥
+
+provider、model、credential 与 runtime bundle 管理复用有效 executable/profile 启动短生命周期 bridge。provider 与 model 只经 DSH `settings` 服务的 `llm-pi-ai.providers` volatile 路径读写；credential 只经 `describe/set/unset`；bundle 只经 `pluginManager`。Paseo 不保存第二份管理状态，也不执行任意 package-manager 命令。每个写操作带 DSH revision，并按 profile 串行；写后 read-back，provider 变化再刷新 `dsh-pi` 模型目录。接口和失败语义见 [DSH 管理](dsh-management.md)。
+
 ### 漂移防护
 
 DSH 内部契约随版本变化。桥接启动有两道检查，任一失败都使连接失败并写明原因：

@@ -1,5 +1,6 @@
 import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { Modal, SettingsAction, SettingsInput, SettingsRow, SettingsSwitch } from "@getpaseo/plugin/client/ui";
+import { Modal } from "@getpaseo/plugin/client/react-native";
+import { SettingsAction, SettingsInput, SettingsRow, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import SettingsSection from "./settings-section.js";

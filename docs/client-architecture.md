@@ -36,4 +36,6 @@ Paseo 0.11、0.14、0.15.3 对 Provider connect 和普通插件 RPC 设有 30 �
 
 ## DSH 界面扩展范围
 
+设置页的 `Model providers` 与 `DSH plugins` 通过 plugin RPC 操作 Daemon 主机上的 DSH 服务。客户端只持有脱敏 view 和当前表单草稿；已存 secret 不进入客户端。provider 与 bundle 写入都携带有效 profile、launch revision 和 DSH revision，旧草稿不能覆盖切换后的目标。完整交互和安全边界见 [DSH 管理](dsh-management.md)。
+
 `paseo` profile 由 DSH 官方 `web` 模板生成，运行时配置和扩展注册照常加载，打开浏览器界面的几行在启动时禁用。注册成功不代表该扩展在 Paseo 中具备功能；依赖浏览器或终端界面的回调与呈现需要另行适配。浏览器端的界面插件、终端菜单、快捷键和主题属于 DSH 自己界面的能力，不会自动转换成 Paseo 手机组件。

@@ -2391,6 +2391,12 @@ test("a tool result without images adds no assistant message", async () => {
 });
 
 test("replaying a resumed session emits tool-result images from historical events", async () => {
+  const replayedPath = process.platform === "win32"
+    ? "\\\\server\\share\\replayed.png"
+    : "/cache/images/replayed.png";
+  const replayedUrl = process.platform === "win32"
+    ? "file://server/share/replayed.png"
+    : "file:///cache/images/replayed.png";
   class ReplayImageBridge extends FakeBridge {
     override async request<Name extends keyof BridgeMethods>(
       method: Name,
@@ -2425,7 +2431,7 @@ test("replaying a resumed session emits tool-result images from historical event
                   content: [{ type: "text", text: "<type>image</type>" }],
                 },
               },
-              images: [{ index: 1, status: "ready", path: "/cache/images/replayed.png", name: "shot.png" }],
+              images: [{ index: 1, status: "ready", path: replayedPath, name: "shot.png" }],
             },
           ],
         } as BridgeMethods[Name]["result"];
@@ -2462,7 +2468,7 @@ test("replaying a resumed session emits tool-result images from historical event
   assert.equal(item.type, "assistant_message");
   if (item.type === "assistant_message") {
     assert.equal(item.messageId, "tool-image:41:1");
-    assert.ok(item.text.includes("![shot.png](file:///cache/images/replayed.png)"));
+    assert.ok(item.text.includes(`![shot.png](${replayedUrl})`));
   }
   await connection.close();
 });

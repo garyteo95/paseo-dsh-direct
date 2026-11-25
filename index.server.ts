@@ -8,6 +8,21 @@ import { createDshProvider } from "./server/provider.js";
 import type { ProviderConnection, ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { createSubagentSettingsAccess } from "./server/subagent-settings.js";
 import { readSubagentSettings, saveSubagentSettings } from "./shared/subagent-settings.js";
+import { createManagementAccess } from "./server/management.js";
+import {
+  cancelPluginOperation,
+  discoverProviderModels,
+  installPlugin,
+  pluginStatus,
+  readManagement,
+  readPlugins,
+  removePlugin,
+  removeProvider,
+  setPluginEnabled,
+  testProvider,
+  updatePlugin,
+  upsertProvider,
+} from "./shared/management.js";
 
 const HOST_EXIT_EVENTS = ["disconnect", "SIGTERM", "SIGINT"] as const;
 // A pending host request must not keep an orphaned worker alive after its host is gone.
@@ -34,6 +49,12 @@ export default function contribute(server: PluginServerContext) {
       bridgeSource: DSH_BRIDGE_SOURCE, executable, profile, startupTimeoutMs, providerLaunch: launch,
     }),
   });
+  const management = createManagementAccess({
+    target: async () => ({ configured: await configured(), launch: providerLaunch }),
+    open: ({ configured: { executable, profile, startupTimeoutMs }, launch }) => openBridge({
+      bridgeSource: DSH_BRIDGE_SOURCE, executable, profile, startupTimeoutMs, providerLaunch: launch,
+    }),
+  });
   // Provider discovery supplies the same resolved command and environment used for sessions.
   const refreshLaunch = async (paseo: import("@getpaseo/client").PaseoApi) => {
     await paseo.providers.refresh({ providers: ["dsh-pi"] });
@@ -48,6 +69,35 @@ export default function contribute(server: PluginServerContext) {
     await refreshLaunch(paseo);
     return subagents.save(input);
   });
+  server.handle(readManagement, async (_input, { paseo }) => {
+    // Capture the daemon-resolved launch when possible, but a broken model
+    // catalog must not hide the management surface that can repair it.
+    await refreshLaunch(paseo).catch(() => undefined);
+    return management.run("management.read", {});
+  });
+  server.handle(upsertProvider, async (input, { paseo }) => {
+    const result = await management.run("management.provider.upsert", input, true);
+    try {
+      await refreshLaunch(paseo);
+      return { ...result, catalogRefreshed: true };
+    } catch {
+      return { ...result, catalogRefreshed: false, catalogDiagnostic: "Provider saved, but the Paseo model catalog could not refresh." };
+    }
+  });
+  server.handle(removeProvider, async (input, { paseo }) => {
+    const view = await management.run("management.provider.remove", input, true);
+    await refreshLaunch(paseo);
+    return view;
+  });
+  server.handle(discoverProviderModels, (input) => management.run("management.provider.discover", input));
+  server.handle(testProvider, (input) => management.run("management.provider.test", input));
+  server.handle(readPlugins, () => management.run("management.plugins.read", {}));
+  server.handle(installPlugin, (input) => management.run("management.plugins.install", input, true));
+  server.handle(setPluginEnabled, (input) => management.run("management.plugins.enable", input, true));
+  server.handle(updatePlugin, (input) => management.run("management.plugins.update", input, true));
+  server.handle(removePlugin, (input) => management.run("management.plugins.remove", input, true));
+  server.handle(pluginStatus, (input) => management.run("management.plugins.status", input, true));
+  server.handle(cancelPluginOperation, (input) => management.run("management.plugins.cancel", input, true));
   const provider = createDshProvider({
     configured,
     observeLaunch: (launch) => { providerLaunch = launch; },
@@ -87,6 +137,7 @@ export default function contribute(server: PluginServerContext) {
     startup.abort();
     await Promise.allSettled([
       subagents.dispose(),
+      management.dispose(),
       ...inFlight,
       ...Array.from(connections, (connection) => connection.close()),
     ]);

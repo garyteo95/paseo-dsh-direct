@@ -24,11 +24,16 @@ async function run(withPrompt: boolean): Promise<void> {
   try {
     const initialized = bridge.initialized
     const sessions = await bridge.request('session.list', {}, LIST_SESSIONS_TIMEOUT_MS)
+    const management = await bridge.request('management.read', {})
+    const plugins = await bridge.request('management.plugins.read', {})
     console.log(JSON.stringify({
       profile: initialized.profile,
       modelCount: initialized.catalog.models.length,
       preset: initialized.catalog.defaultPreset,
       historyCount: sessions.sessions.length,
+      managementSupported: management.supported,
+      configuredProviderCount: management.providers.length,
+      pluginManagementSupported: plugins.supported,
     }))
     if (withPrompt) await runPrompt(bridge)
   } finally {

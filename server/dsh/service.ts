@@ -21,6 +21,7 @@ import type {
   SlashCommand,
 } from "../../shared/bridge-protocol.js";
 import { SubagentSettings } from "./subagent-settings.js";
+import { DshManagement, validateManagementParams } from "./management.js";
 import { canStopSessionRuntime, SubagentRunTracker } from "./runtime-safety.js";
 import { slashLine } from "../../shared/bridge-protocol.js";
 import type { ToolImageOutcome } from "../../shared/bridge-protocol.js";
@@ -164,6 +165,7 @@ export class BridgeService {
   private stopping = false;
   private stopTask?: Promise<{}>;
   private readonly subagentSettings: SubagentSettings;
+  private readonly management: DshManagement;
   private subagentSettingsInitializationError?: Error;
   private readonly subagentRuns = new SubagentRunTracker();
 
@@ -175,6 +177,7 @@ export class BridgeService {
     private readonly helpers?: HostHelpers,
   ) {
     this.subagentSettings = new SubagentSettings(ctx, profile);
+    this.management = new DshManagement(ctx, profile);
     this.subscriptions.push(
       ctx.on("session/created", (session) => {
         if (session.header.parentSession) {
@@ -582,6 +585,7 @@ export class BridgeService {
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new Error("Method params must be an object");
     const params = record(input);
+    if (method.startsWith("management.")) validateManagementParams(method, params);
     let result: unknown;
     switch (method) {
       case "bridge.initialize": {
@@ -622,6 +626,42 @@ export class BridgeService {
       case "subagent.settings.save":
         result = await this.subagentSettings.save(params);
         this.subagentSettingsInitializationError = undefined;
+        break;
+      case "management.read":
+        result = await this.management.read();
+        break;
+      case "management.provider.upsert":
+        result = await this.management.upsert(params as never);
+        break;
+      case "management.provider.remove":
+        result = await this.management.remove(params as never);
+        break;
+      case "management.provider.discover":
+        result = await this.management.discover(params as never);
+        break;
+      case "management.provider.test":
+        result = await this.management.test(params as never);
+        break;
+      case "management.plugins.read":
+        result = await this.management.readPlugins();
+        break;
+      case "management.plugins.install":
+        result = await this.management.installPlugin(params as never);
+        break;
+      case "management.plugins.enable":
+        result = await this.management.togglePlugin(params as never);
+        break;
+      case "management.plugins.update":
+        result = await this.management.updatePlugin(params as never);
+        break;
+      case "management.plugins.remove":
+        result = await this.management.removePlugin(params as never);
+        break;
+      case "management.plugins.status":
+        result = await this.management.pluginStatus(params as never);
+        break;
+      case "management.plugins.cancel":
+        result = await this.management.cancelPlugin(params as never);
         break;
       case "session.list":
         result = { sessions: await this.listSessions(listParams(params)) };

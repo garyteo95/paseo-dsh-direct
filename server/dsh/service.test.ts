@@ -45,7 +45,7 @@ function fixture(
   let created: HostAgent | undefined;
   let createGate = Promise.resolve();
   const models = { provider: "configured", model: "test" };
-  const services = {
+  const services: HostServices = {
     settings: options.settings,
     configEditor: options.configEditor,
     agents: {
@@ -132,7 +132,7 @@ function fixture(
     sessionTitle: undefined,
     appReady: undefined,
     appExit: undefined,
-  } satisfies HostServices;
+  };
   const ctx: HostContext = {
     get: (name) => services[name],
     on: (event, listener) => {
@@ -149,7 +149,7 @@ function fixture(
   const bridge = new BridgeService(
     ctx,
     (method, params) => notifications.push({ method, params }),
-    "/tmp/paseo-dsh-test-images",
+    join(tmpdir(), "paseo-dsh-test-images"),
   );
   return {
     ctx,
