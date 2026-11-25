@@ -20,7 +20,7 @@ DSH 桥接以 Cordis 插件形式运行在 DSH 内部。启动时生成临时 pa
 
 DSH 的启动审计忽略被禁用的必需行，所以禁用这五行后 DSH 正常启动，不监听任何 TCP 端口，也不打开浏览器。依赖它们的浏览器端插件行（如 `file-upload`、`client-hmr`、`open-in-app`）停在等待状态，DSH 在 stderr 打一条「entries did not activate」提示，不影响桥接。preset 行和会话、工具相关的行不受影响。`appReady` 与 `appExit` 由 DSH 启动器提供，桥接在 `appReady` 之后开始读 stdin。浏览器端界面插件不等同于 Paseo 前端功能。
 
-模型目录和历史发现使用独立桥接；每个活动 Paseo 会话拥有自己的 DSH 子进程，接收宿主提供的会话环境变量。关闭会话时释放对应子进程。
+模型目录和历史发现使用独立桥接；Paseo 每次请求模型目录时，Provider 另起短生命周期桥接读取当时的 DSH 模型配置，返回后立即关闭。同一 Paseo Provider 连接在设置页保存 provider 或凭证后刷新目录时，会重新读取 DSH 实际提供的模型，不复用连接建立时的旧目录。DSH 配置或凭证使 route 不可用时，该模型仍不会出现在目录里。每个活动 Paseo 会话拥有自己的 DSH 子进程，接收宿主提供的会话环境变量。关闭会话时释放对应子进程。
 
 智能体执行循环属于 DSH。profile 的扩展注册照常运行，DSH 自带的浏览器界面不在本链路中执行。
 
@@ -43,7 +43,9 @@ Paseo 在 `status` 与 `connect` 请求里带 `launch`（`command`、`args`、`e
 
 profile 的顺序是非空的 `PASEO_DSH_PROFILE`、设置页里非空的 `profile`、默认的 `paseo`。`server/dsh-config.ts` 的 `mergeDshConfigured` 把环境变量和设置页合并成一份 `DshConfigured`（空串与纯空白都算未设置）；`index.server.ts` 用 `server.registerSettings(DSH_SETTINGS)` 注册设置，并在每次起桥、`status()` 和计算目录缓存键时重新 `read()`，所以改动只作用于新会话与新的目录发现，已运行的桥不受影响。设置的状态为 `invalid` 或读取失败时按未设置处理，并向 stderr 写一行说明。
 
-`getCatalogCacheKey` 的键由范围（全局或工作区 `cwd`）、生效的启动命令加参数、生效的 profile 组成，因此改动 profile 或可执行文件后，新的目录发现不会复用旧结果。
+`getCatalogCacheKey` 的键由范围（全局或工作区 `cwd`）、生效的启动命令加参数、生效的 profile 和内置模型显示开关组成，因此改动 profile、可执行文件或显示开关后，新的目录发现不会复用旧结果。
+
+宿主设置 `showBuiltInDeepSeekModels` 默认关闭（未设置视为隐藏）。开启时，Provider 在 Paseo 模型目录及新会话选择中包含 provider ID 为 `deepseek-official`、`deepseek-account` 的模型；关闭时排除它们，原生 DSH profile、凭证和 adapter 不变。目录缓存键包含该开关，已有连接的目录请求和新会话打开时也重新读取开关。若 DSH 默认模型被排除，新会话使用第一个可见模型；无可见模型时拒绝创建，避免回退到隐藏的默认模型。恢复持久会话保留原生模型选择。
 
 ### 桥接就绪等待与宿主时限
 

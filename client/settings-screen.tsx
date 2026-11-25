@@ -1,6 +1,6 @@
 import { useSettings, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { ScrollView } from "@getpaseo/plugin/client/react-native";
-import { SettingsAction, SettingsInput, SettingsRow } from "@getpaseo/plugin/client/ui";
+import { SettingsAction, SettingsInput, SettingsRow, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import SettingsSection from "./settings-section.js";
 import { useRef } from "react";
 import { DEFAULT_STARTUP_TIMEOUT_SECONDS, DSH_SETTINGS, MAX_STARTUP_TIMEOUT_SECONDS, type DshSettingsValues } from "../shared/settings.js";
@@ -10,6 +10,20 @@ import ManagementSettings from "./management-settings.js";
 const EXECUTABLE_HINT = "DSH command or path; environment takes priority";
 const PROFILE_HINT = "Default: paseo, unless set by environment";
 const STARTUP_TIMEOUT_HINT = `Wait for the bridge ready signal after dsh starts; ${DEFAULT_STARTUP_TIMEOUT_SECONDS}s by default, up to ${MAX_STARTUP_TIMEOUT_SECONDS}s`;
+
+function BuiltInModelsSwitch({ value, saving, onSave }: {
+  value: boolean;
+  saving: boolean;
+  onSave(value: boolean): void;
+}) {
+  return <SettingsSwitch
+    label="Show built-in DeepSeek models in Paseo"
+    hint="Turn off to hide built-in models from new Paseo sessions. Existing sessions and DSH subagents may still use DeepSeek credits."
+    value={value}
+    onValueChange={onSave}
+    disabled={saving}
+  />;
+}
 
 /** Edits the dsh executable, profile and startup timeout that the server reads when it launches a bridge. */
 export default function DshSettingsScreen({ theme, host }: PluginSurfaceProps) {
@@ -61,6 +75,18 @@ export default function DshSettingsScreen({ theme, host }: PluginSurfaceProps) {
         executable: draft.current.executable ?? values.executable ?? "",
         profile: draft.current.profile ?? values.profile ?? "",
         startupTimeoutSeconds: draft.current.startupTimeoutSeconds ?? values.startupTimeoutSeconds ?? "",
+        showBuiltInDeepSeekModels: draft.current.showBuiltInDeepSeekModels ?? values.showBuiltInDeepSeekModels ?? false,
+      },
+      revision,
+    );
+  // The switch is the only control that applies on its own, without the Save button.
+  const saveBuiltInModelsSwitch = (value: boolean) =>
+    void settings.save(
+      {
+        executable: values.executable ?? "",
+        profile: values.profile ?? "",
+        startupTimeoutSeconds: values.startupTimeoutSeconds ?? "",
+        showBuiltInDeepSeekModels: value,
       },
       revision,
     );
@@ -101,9 +127,14 @@ export default function DshSettingsScreen({ theme, host }: PluginSurfaceProps) {
           }}
           disabled={settings.saving}
         />
+        <BuiltInModelsSwitch
+          value={values.showBuiltInDeepSeekModels ?? false}
+          onSave={saveBuiltInModelsSwitch}
+          saving={settings.saving}
+        />
         <SettingsAction
           label="Save settings"
-          hint="Applies to newly started bridges"
+          hint="Connection changes apply to new bridges; the built-in models switch saves on its own"
           error={settings.saveError}
           actionLabel={settings.saving ? "Saving" : "Save"}
           onPress={save}

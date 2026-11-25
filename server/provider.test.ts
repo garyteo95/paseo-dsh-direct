@@ -69,7 +69,7 @@ class FakeBridge implements DshBridge {
       return {
         sessionId: open.sessionId ?? "native-new",
         cwd: open.cwd,
-        model: this.initialized.catalog.defaultModel,
+        model: open.model ?? this.initialized.catalog.defaultModel,
         preset: "default",
         permissionPreset: open.permissionPreset ?? "read-only",
         ...(this.openedUsage ? { usage: this.openedUsage } : {}),
@@ -1680,6 +1680,32 @@ describe("dsh provider shutdown during startup", () => {
     config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true },
   };
 
+  it("waits for a catalog bridge launch and emits no catalog after close", async () => {
+    const discovery = new FakeBridge();
+    const catalogBridge = new FakeBridge();
+    const launch = deferred<DshBridge>();
+    let launches = 0;
+    const provider = createDshProvider({
+      createBridge: () => ++launches === 1 ? Promise.resolve(discovery) : launch.promise,
+      detectDshVersion: noVersionWarning,
+    });
+    const connection = await provider.connect({ versions: [1], capabilities: [] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send({ type: "catalog", requestId: "catalog-close" });
+    await tick();
+    let closed = false;
+    const closing = connection.close().then(() => { closed = true; });
+    await tick();
+    assert.equal(closed, false);
+    launch.resolve(catalogBridge);
+    await closing;
+    await tick();
+    assert.equal(discovery.closeCount, 1);
+    assert.equal(catalogBridge.closeCount, 1);
+    assert.equal(events.some((event) => event.type === "catalog"), false);
+  });
+
   it("does not start a queued open after the connection closes", async () => {
     const discovery = new FakeBridge();
     let launches = 0;
@@ -2191,7 +2217,7 @@ describe("plan review permissions", () => {
 });
 
 describe("dsh catalog cache key", () => {
-  const keyFor = (configured: { executable?: string; profile?: string }, request: Parameters<NonNullable<ReturnType<typeof createDshProvider>["getCatalogCacheKey"]>>[0] = { scope: "global" }) =>
+  const keyFor = (configured: { executable?: string; profile?: string; showBuiltInDeepSeekModels?: boolean }, request: Parameters<NonNullable<ReturnType<typeof createDshProvider>["getCatalogCacheKey"]>>[0] = { scope: "global" }) =>
     createDshProvider({
       configured: () => configured,
       createBridge: async () => {
@@ -2202,6 +2228,11 @@ describe("dsh catalog cache key", () => {
   it("changes with the effective profile", async () => {
     assert.notEqual(await keyFor({ profile: "a" }), await keyFor({ profile: "b" }));
     assert.equal(await keyFor({}), await keyFor({ profile: DEFAULT_PROFILE }));
+  });
+
+  it("changes when the built-in model switch changes", async () => {
+    assert.notEqual(await keyFor({ showBuiltInDeepSeekModels: false }), await keyFor({ showBuiltInDeepSeekModels: true }));
+    assert.equal(await keyFor({}), await keyFor({ showBuiltInDeepSeekModels: true }));
   });
 
   it("changes with the effective executable, including Paseo's launch when none is configured", async () => {
@@ -2232,6 +2263,147 @@ describe("dsh catalog cache key", () => {
     ]);
     assert.equal(keys.size, 3);
   });
+});
+
+test("catalog refresh sees a newly configured OpenCode model on the same provider connection", async () => {
+  const bridges: FakeBridge[] = [];
+  let openCodeConfigured = false;
+  const provider = createDshProvider({
+    createBridge: async () => {
+      const bridge = new FakeBridge();
+      if (openCodeConfigured) bridge.initialized.catalog.models.push({
+        id: "opencode-go/deepseek-v4.1-flash", provider: "opencode-go",
+        model: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", providerName: "OpenCode Go",
+      });
+      bridges.push(bridge);
+      return bridge;
+    },
+    detectDshVersion: noVersionWarning,
+  });
+  const connection = await provider.connect({ versions: [1], capabilities: ["session.persistence"] });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({ type: "catalog", requestId: "before" });
+    await tick(); await tick();
+    await connection.send({ type: "session.open", requestId: "session", sessionId: "active", history: "skip",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true } });
+    await tick(); await tick();
+    openCodeConfigured = true;
+    await connection.send({ type: "catalog", requestId: "after" });
+    await tick(); await tick();
+    const before = events.find((event) => event.type === "catalog" && event.requestId === "before");
+    const after = events.find((event) => event.type === "catalog" && event.requestId === "after");
+    assert.ok(before?.type === "catalog" && after?.type === "catalog");
+    assert.equal(before.catalog.models.some((model) => model.id === "opencode-go/deepseek-v4.1-flash"), false);
+    assert.equal(after.catalog.models.some((model) => model.id === "opencode-go/deepseek-v4.1-flash"), true);
+    assert.equal(bridges.length, 4);
+    assert.deepEqual(bridges.map((bridge) => bridge.closeCount), [0, 1, 0, 1]);
+  } finally {
+    await connection.close();
+  }
+  assert.deepEqual(bridges.map((bridge) => bridge.closeCount), [1, 1, 1, 1]);
+});
+
+test("built-in DeepSeek model switch filters new agents and preserves native resume", async () => {
+  const source = new FakeBridge();
+  source.initialized.catalog.models = [
+    { id: "deepseek-official/deepseek-flash", provider: "deepseek-official", model: "deepseek-flash", name: "DeepSeek Flash", providerName: "DeepSeek" },
+    { id: "deepseek-account/deepseek-v4-pro", provider: "deepseek-account", model: "deepseek-v4-pro", name: "DeepSeek V4 Pro", providerName: "DeepSeek Account" },
+    { id: "zai/glm-5.3", provider: "zai", model: "glm-5.3", name: "GLM 5.3", providerName: "Z.AI" },
+    { id: "opencode-go/kimi-k2", provider: "opencode-go", model: "kimi-k2", name: "Kimi K2", providerName: "OpenCode Go" },
+    { id: "custom/deepseek-flash", provider: "custom", model: "deepseek-flash", name: "Custom Flash", providerName: "Custom" },
+  ];
+  source.initialized.catalog.defaultModel = { provider: "deepseek-official", model: "deepseek-flash" };
+  const bridges: FakeBridge[] = [];
+  let showBuiltInDeepSeekModels = false;
+  const provider = createDshProvider({
+    createBridge: async () => {
+      const bridge = new FakeBridge();
+      bridge.initialized.catalog = structuredClone(source.initialized.catalog);
+      bridges.push(bridge);
+      return bridge;
+    },
+    configured: () => ({ showBuiltInDeepSeekModels }),
+    detectDshVersion: noVersionWarning,
+  });
+  const connection = await provider.connect({ versions: [1], capabilities: ["session.persistence", "session.configure"] });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({ type: "catalog", requestId: "hidden" });
+    await tick();
+    const hidden = events.find((event) => event.type === "catalog" && event.requestId === "hidden");
+    assert.ok(hidden?.type === "catalog");
+    assert.deepEqual(hidden.catalog.models.map((model) => model.id), ["zai/glm-5.3", "opencode-go/kimi-k2", "custom/deepseek-flash"]);
+    assert.equal(hidden.catalog.defaultModel, "zai/glm-5.3");
+
+    const config = { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true, thinkingOption: "deepseek-only" };
+    await connection.send({ type: "session.open", requestId: "new", sessionId: "new", config, history: "skip" });
+    await tick(); await tick();
+    assert.deepEqual(bridges[2]?.calls.find((call) => call.method === "session.open")?.params, {
+      cwd: "/repo", model: { provider: "zai", model: "glm-5.3" },
+    });
+    const newConfig = events.find((event) => event.type === "session.config" && event.sessionId === "new");
+    assert.equal(newConfig?.type === "session.config" && newConfig.config.model, "zai/glm-5.3");
+    await connection.send({ type: "session.open", requestId: "resume", sessionId: "old", config,
+      persistence: { version: 1, data: { dshSessionId: "native-old" } }, history: "skip" });
+    await tick(); await tick();
+    assert.deepEqual(bridges[3]?.calls.find((call) => call.method === "session.open")?.params, {
+      sessionId: "native-old", resume: true, cwd: "/repo",
+    });
+    await connection.send({ type: "session.configure", requestId: "old-thinking", sessionId: "old", changes: { thinkingOption: "high" } });
+    await tick(); await tick();
+    assert.deepEqual(bridges[3]?.calls.find((call) => call.method === "session.configure")?.params, {
+      sessionId: "native-old", model: { provider: "deepseek-official", model: "deepseek-flash", reasoningEffort: "high" },
+    });
+
+    showBuiltInDeepSeekModels = true;
+    await connection.send({ type: "catalog", requestId: "restored" });
+    await tick();
+    const restored = events.find((event) => event.type === "catalog" && event.requestId === "restored");
+    assert.ok(restored?.type === "catalog");
+    assert.equal(restored.catalog.models.length, 5);
+    assert.equal(restored.catalog.defaultModel, "deepseek-official/deepseek-flash");
+  } finally {
+    await connection.close();
+  }
+});
+
+test("hidden built-in DeepSeek models cannot start new agents", async () => {
+  const source = new FakeBridge();
+  source.initialized.catalog.models = [
+    { id: "deepseek-official/deepseek-flash", provider: "deepseek-official", model: "deepseek-flash", name: "DeepSeek Flash", providerName: "DeepSeek" },
+  ];
+  source.initialized.catalog.defaultModel = { provider: "deepseek-official", model: "deepseek-flash" };
+  const bridges: FakeBridge[] = [];
+  const provider = createDshProvider({
+    createBridge: async () => {
+      const bridge = new FakeBridge();
+      bridge.initialized.catalog = structuredClone(source.initialized.catalog);
+      bridges.push(bridge);
+      return bridge;
+    },
+    configured: () => ({ showBuiltInDeepSeekModels: false }),
+    detectDshVersion: noVersionWarning,
+  });
+  const connection = await provider.connect({ versions: [1], capabilities: [] });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({ type: "session.open", requestId: "none", sessionId: "none", history: "skip",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true } });
+    await tick(); await tick();
+    assert.equal(bridges.some((bridge) => bridge.calls.some((call) => call.method === "session.open")), false);
+    assert.ok(events.some((event) => event.type === "request.failed" && event.requestId === "none" && /No selectable DSH models/.test(event.error.message)));
+    await connection.send({ type: "session.open", requestId: "stale", sessionId: "stale", history: "skip",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true, model: "deepseek-official/deepseek-flash" } });
+    await tick(); await tick();
+    assert.equal(bridges.some((bridge) => bridge.calls.some((call) => call.method === "session.open")), false);
+    assert.ok(events.some((event) => event.type === "request.failed" && event.requestId === "stale" && /hidden in the plugin settings/.test(event.error.message)));
+  } finally {
+    await connection.close();
+  }
 });
 
 describe("dsh provider status", () => {

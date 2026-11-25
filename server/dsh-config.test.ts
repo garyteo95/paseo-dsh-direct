@@ -60,6 +60,15 @@ describe("dsh profile precedence", () => {
   });
 });
 
+describe("built-in DeepSeek model visibility", () => {
+  it("defaults to hidden and respects the host switch", () => {
+    assert.equal(mergeDshConfigured({}, undefined).showBuiltInDeepSeekModels, false);
+    assert.equal(mergeDshConfigured({}, {}).showBuiltInDeepSeekModels, false);
+    assert.equal(mergeDshConfigured({}, { showBuiltInDeepSeekModels: true }).showBuiltInDeepSeekModels, true);
+    assert.equal(mergeDshConfigured({}, { showBuiltInDeepSeekModels: false }).showBuiltInDeepSeekModels, false);
+  });
+});
+
 describe("reading the settings", () => {
   const source = (state: Awaited<ReturnType<DshSettingsSource["read"]>>): DshSettingsSource => ({ read: async () => state });
 

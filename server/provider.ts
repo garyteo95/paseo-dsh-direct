@@ -72,6 +72,9 @@ const PERMISSION_PRESET_SETTING = "permissionPreset";
 const PLAN_MODE_SETTING = "planMode";
 // Leave room for the host's ten-second safety-query deadline and IPC overhead.
 const RUNTIME_SAFETY_TIMEOUT_MS = 5_000;
+const BUILT_IN_DEEPSEEK_PROVIDERS = new Set(["deepseek-official", "deepseek-account"]);
+
+export const isBuiltInDeepSeekProvider = (provider: string): boolean => BUILT_IN_DEEPSEEK_PROVIDERS.has(provider);
 
 type DetectVersion = (
   executable: string,
@@ -182,6 +185,7 @@ interface SessionState {
   activityRevision: number;
   ready: boolean;
   closed: boolean;
+  showBuiltInDeepSeekModels: boolean;
 }
 
 export function createDshProvider(options: DshProviderOptions): ProviderRegistration {
@@ -192,10 +196,10 @@ export function createDshProvider(options: DshProviderOptions): ProviderRegistra
     icon: "dsh.svg",
     getCatalogCacheKey: async (request) => {
       options.observeLaunch?.(request.launch);
-      const configured = (await options.configured?.()) ?? {};
+      const configured: DshConfigured = (await options.configured?.()) ?? {};
       const launch = describeDshLaunch(resolveDshLaunch(configured.executable, request.launch));
       const scope = request.scope === "workspace" ? request.cwd : "global";
-      return JSON.stringify(["dsh-pi", scope, launch, configured.profile ?? DEFAULT_PROFILE]);
+      return JSON.stringify(["dsh-pi", scope, launch, configured.profile ?? DEFAULT_PROFILE, configured.showBuiltInDeepSeekModels !== false]);
     },
     command: [options.command ?? "dsh"],
     async status(request) {
@@ -226,6 +230,7 @@ export function createDshProvider(options: DshProviderOptions): ProviderRegistra
         options.detectDshVersion ?? detectDshVersion,
         providerLaunch?.env,
         options.streamCoalesce ?? {},
+        options.configured,
       );
     },
   };
@@ -264,10 +269,11 @@ function createConnection(
   detectVersion: DetectVersion,
   launchEnv: Readonly<Record<string, string>> | undefined,
   streamCoalesce: StreamCoalesceConfig = {},
+  configured?: DshProviderOptions["configured"],
 ): ProviderConnection {
   const listeners = new Set<(event: ProviderEvent) => void>();
   const sessions = new Map<string, SessionState>();
-  const pendingOpens = new Set<Promise<void>>();
+  const pendingBridgeRequests = new Set<Promise<void>>();
   const openingBridges = new Set<DshBridge>();
   const bridgeClosures = new WeakMap<DshBridge, Promise<void>>();
   const cleanupErrors: unknown[] = [];
@@ -306,14 +312,14 @@ function createConnection(
         if (closed) return;
         await dispatch(input, {
           discoveryBridge, createBridge, sessions, emit, capabilities, detectVersion, launchEnv,
-          openingBridges, closeBridge, isClosed: () => closed, streamCoalesce,
+          openingBridges, closeBridge, isClosed: () => closed, streamCoalesce, configured,
         });
       }).catch((error) => failInput(input, error, emit)).finally(() => {
         if (operationSession) operationSession.pendingOperations -= 1;
       });
-      if (input.type === "session.open") {
-        pendingOpens.add(pending);
-        void pending.then(() => pendingOpens.delete(pending));
+      if (input.type === "session.open" || input.type === "catalog") {
+        pendingBridgeRequests.add(pending);
+        void pending.then(() => pendingBridgeRequests.delete(pending));
       }
     },
     onEvent(listener) {
@@ -335,7 +341,7 @@ function createConnection(
       closePromise = (async () => {
         await Promise.allSettled([
           ...Array.from(bridges, closeBridge),
-          ...pendingOpens,
+          ...pendingBridgeRequests,
         ]);
         if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "Could not close DSH bridges");
       })();
@@ -658,17 +664,30 @@ interface DispatchState {
   closeBridge(bridge: DshBridge): Promise<void>;
   isClosed(): boolean;
   streamCoalesce: StreamCoalesceConfig;
+  configured?: DshProviderOptions["configured"];
 }
 
 async function dispatch(input: ProviderInput, state: DispatchState): Promise<void> {
   switch (input.type) {
-    case "catalog":
-      state.emit({
-        type: "catalog",
-        requestId: input.requestId,
-        catalog: catalog(state.discoveryBridge.initialized.catalog),
-      });
+    case "catalog": {
+      const showBuiltInDeepSeekModels = (await state.configured?.())?.showBuiltInDeepSeekModels !== false;
+      // The connection's initial bridge predates provider and credential edits.
+      // Paseo reuses this connection across refreshes, so open a fresh bridge
+      // for each requested catalog and release it after projecting the result.
+      const bridge = await state.createBridge();
+      state.openingBridges.add(bridge);
+      try {
+        if (!state.isClosed()) state.emit({
+          type: "catalog",
+          requestId: input.requestId,
+          catalog: catalog(bridge.initialized.catalog, showBuiltInDeepSeekModels),
+        });
+      } finally {
+        state.openingBridges.delete(bridge);
+        await state.closeBridge(bridge);
+      }
       return;
+    }
     case "sessions":
       await listSessions(input, state);
       return;
@@ -754,11 +773,12 @@ async function openSession(
   let session: SessionState | undefined;
   try {
     if (state.isClosed()) return;
+    const showBuiltInDeepSeekModels = (await state.configured?.())?.showBuiltInDeepSeekModels !== false;
     // Resume from DSH's durable model and preset. Paseo fills catalog defaults into
     // open config, so forwarding them would accidentally overwrite native history.
     const selection = nativeId
       ? undefined
-      : selectModel(bridge.initialized.catalog, input.config.model, input.config.thinkingOption);
+      : selectModel(bridge.initialized.catalog, input.config.model, input.config.thinkingOption, showBuiltInDeepSeekModels);
     const openSettings = sessionSettings(input.config);
     const permissionPreset = nativeId
       ? undefined
@@ -812,6 +832,7 @@ async function openSession(
       activityRevision: 0,
       ready: false,
       closed: false,
+      showBuiltInDeepSeekModels,
     };
     state.sessions.set(input.sessionId, session);
     session.releaseBridgeListeners = listenToSessionBridge(session, state.emit);
@@ -1084,7 +1105,8 @@ async function configureSession(
   const modelChanged =
     input.changes.model !== undefined || input.changes.thinkingOption !== undefined;
   const selection = modelChanged
-    ? selectModel(source, next.model, next.thinkingOption)
+    ? selectModel(source, next.model, next.thinkingOption,
+        session.showBuiltInDeepSeekModels || input.changes.model === undefined)
     : undefined;
   const preset = input.changes.mode === null
     ? source.defaultPreset
@@ -1816,19 +1838,34 @@ function preapprovedTools(config: ProviderSessionConfig): string[] {
 }
 
 const catalogs = new WeakMap<BridgeCatalog, ProviderCatalog>();
+const limitedCatalogs = new WeakMap<BridgeCatalog, ProviderCatalog>();
 
 /** Paseo view of a bridge catalog; a bridge's catalog never changes, so it is built once. */
-function catalog(source: BridgeCatalog): ProviderCatalog {
-  let mapped = catalogs.get(source);
-  if (!mapped) catalogs.set(source, (mapped = buildCatalog(source)));
+function catalog(source: BridgeCatalog, showBuiltInDeepSeekModels = true): ProviderCatalog {
+  const cache = showBuiltInDeepSeekModels ? catalogs : limitedCatalogs;
+  let mapped = cache.get(source);
+  if (!mapped) cache.set(source, (mapped = buildCatalog(source, showBuiltInDeepSeekModels)));
   return mapped;
 }
 
-function buildCatalog(source: BridgeCatalog): ProviderCatalog {
+function visibleModels(source: BridgeCatalog, showBuiltInDeepSeekModels: boolean): BridgeCatalog["models"] {
+  return showBuiltInDeepSeekModels
+    ? source.models
+    : source.models.filter((model) => !isBuiltInDeepSeekProvider(model.provider));
+}
+
+function visibleDefaultModel(source: BridgeCatalog, showBuiltInDeepSeekModels: boolean): BridgeCatalog["models"][number] | undefined {
+  const models = visibleModels(source, showBuiltInDeepSeekModels);
+  return models.find((model) => model.provider === source.defaultModel?.provider && model.model === source.defaultModel.model)
+    ?? (showBuiltInDeepSeekModels ? undefined : models[0]);
+}
+
+function buildCatalog(source: BridgeCatalog, showBuiltInDeepSeekModels: boolean): ProviderCatalog {
+  const models = visibleModels(source, showBuiltInDeepSeekModels);
   const nameCounts = new Map<string, number>();
-  for (const model of source.models) nameCounts.set(model.name, (nameCounts.get(model.name) ?? 0) + 1);
+  for (const model of models) nameCounts.set(model.name, (nameCounts.get(model.name) ?? 0) + 1);
   return {
-    models: source.models.map((model) => ({
+    models: models.map((model) => ({
       id: model.id,
       // The provider goes in the description; the label names it only to tell same-named models apart.
       label: nameCounts.get(model.name)! > 1 ? `${model.name} (${model.providerName})` : model.name,
@@ -1850,25 +1887,21 @@ function buildCatalog(source: BridgeCatalog): ProviderCatalog {
       label: preset.name ?? preset.id,
       description: preset.description,
     })),
-    defaultModel: source.models.find(
-      (model) =>
-        source.defaultModel &&
-        model.provider === source.defaultModel.provider &&
-        model.model === source.defaultModel.model,
-    )?.id,
+    defaultModel: visibleDefaultModel(source, showBuiltInDeepSeekModels)?.id,
     defaultMode: source.defaultPreset,
   };
 }
 
 function configState(session: SessionState, source: BridgeCatalog): ProviderConfigState {
-  const available = catalog(source);
+  const available = catalog(source, session.showBuiltInDeepSeekModels);
   const thinking = session.open.model?.reasoningEffort ?? session.config.thinkingOption;
   const selectedModelId = modelId(source, session.open.model) ?? session.config.model;
+  const selectedHiddenModel = catalog(source).models.find((model) => model.id === selectedModelId && !available.models.some((visible) => visible.id === model.id));
   return {
     model: selectedModelId,
     mode: session.open.preset ?? session.config.mode,
     thinkingOption: thinking,
-    models: available.models,
+    models: selectedHiddenModel ? [...available.models, selectedHiddenModel] : available.models,
     modes: available.modes,
     thinkingOptions:
       source.models
@@ -1972,12 +2005,23 @@ function selectModel(
   source: BridgeCatalog,
   modelId?: string,
   reasoningEffort?: string,
+  showBuiltInDeepSeekModels = true,
 ): ModelSelection | undefined {
   const model = source.models.find((candidate) => candidate.id === modelId);
-  const base = model
-    ? { provider: model.provider, model: model.model }
-    : source.defaultModel;
-  return base ? { ...base, ...(reasoningEffort ? { reasoningEffort } : {}) } : undefined;
+  if (model && !showBuiltInDeepSeekModels && isBuiltInDeepSeekProvider(model.provider)) {
+    throw new Error("Built-in DeepSeek models are hidden in the plugin settings");
+  }
+  const fallback = visibleDefaultModel(source, showBuiltInDeepSeekModels);
+  const selected = model ?? fallback;
+  const base = selected
+    ? { provider: selected.provider, model: selected.model }
+    : showBuiltInDeepSeekModels ? source.defaultModel : undefined;
+  if (!base && !showBuiltInDeepSeekModels) throw new Error("No selectable DSH models are available. Configure Z.AI or OpenCode Go, or show built-in DeepSeek models in the plugin settings.");
+  let effort = reasoningEffort;
+  if (!showBuiltInDeepSeekModels && !model && !fallback?.reasoningEfforts?.some((item) => item.id === effort)) {
+    effort = undefined;
+  }
+  return base ? { ...base, ...(effort ? { reasoningEffort: effort } : {}) } : undefined;
 }
 
 // DSH's built-in exit_plan_mode submits one binary review. More complex

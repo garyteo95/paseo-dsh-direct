@@ -4,7 +4,7 @@ import { launchDshBridge, type LaunchBridgeOptions } from "./server/bridge-clien
 import { currentDshConfigured } from "./server/dsh-config.js";
 import { defaultDshCommand } from "./server/dsh-spawn.js";
 import { DSH_BRIDGE_SOURCE } from "./server/generated-bridge.js";
-import { createDshProvider } from "./server/provider.js";
+import { createDshProvider, isBuiltInDeepSeekProvider } from "./server/provider.js";
 import type { ProviderConnection, ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { createSubagentSettingsAccess } from "./server/subagent-settings.js";
 import { readSubagentSettings, saveSubagentSettings } from "./shared/subagent-settings.js";
@@ -72,7 +72,11 @@ export default function contribute(server: PluginServerContext) {
   server.handle(readManagement, async (_input, { paseo }) => {
     // Capture the daemon-resolved launch when possible, but a broken model
     // catalog must not hide the management surface that can repair it.
-    await refreshLaunch(paseo).catch(() => undefined);
+    const showBuiltInDeepSeekModels = (await configured()).showBuiltInDeepSeekModels === true;
+    await refreshLaunch(paseo, showBuiltInDeepSeekModels ? undefined :
+      (models) => !models.some((model) =>
+        typeof model.metadata?.provider === "string" && isBuiltInDeepSeekProvider(model.metadata.provider)))
+      .catch(() => undefined);
     return management.run("management.read", {});
   });
   server.handle(upsertProvider, async (input, { paseo }) => {

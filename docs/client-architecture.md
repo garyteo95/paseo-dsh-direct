@@ -12,7 +12,11 @@ DSH 原生子代理在父会话时间线里呈现为 `sub_agent` 启动卡片；
 
 ## 设置页
 
-插件在 Paseo 设置里注册 `DeepSeek Harness` 页（`client/settings-screen.tsx`，图标 `Settings`）。`Connection` 区域通过 SDK 的 `useSettings(DSH_SETTINGS)` 读写 `Executable`、`Profile` 和 `Startup timeout`，设置定义在 `shared/settings.ts`，保存范围是当前宿主。`Executable`、`Profile` 留空表示不设置，对应环境变量优先。
+插件在 Paseo 设置里注册 `DeepSeek Harness` 页（`client/settings-screen.tsx`，图标 `Settings`）。`Connection` 区域通过 SDK 的 `useSettings(DSH_SETTINGS)` 读写 `Executable`、`Profile`、`Startup timeout` 和内置 DeepSeek 模型显示开关，设置定义在 `shared/settings.ts`，保存范围是当前宿主。`Executable`、`Profile` 留空表示不设置，对应环境变量优先。
+
+`Show built-in DeepSeek models in Paseo` 默认关闭（未设置视为隐藏），且切换后立即单独保存，不依赖区域底部的保存按钮。关闭时，Paseo 的新建会话模型列表不显示 DSH 自带的 `deepseek-official` 与 `deepseek-account` 模型；Z.AI、OpenCode Go 与其他自定义模型仍可选择。若 DSH 默认模型被隐藏，新会话默认使用目录中第一个可见模型；没有可见模型时会提示先配置模型或重新开启开关。
+
+已有会话仍保留 DSH 原生模型与历史，DSH 子代理也仍可使用 DeepSeek 模型；这些途径可能产生 DeepSeek 用量。DSH 自身的两个 adapter 不会被禁用。重新开启开关即可恢复默认模型选项，无需编辑后端配置文件。
 
 `Startup timeout` 是桥接就绪等待，接受 1–600 整数秒，留空或纯空白用默认 15 秒，没有环境变量覆盖。非法值只忽略这一项，其他字段照常生效。保存后对所有新桥接生效，涵盖会话创建/恢复、目录/历史发现和子代理设置读写；运行中的桥接不变。该窗口只覆盖 spawn 到 `bridge.ready`，前置 profile 创建（60 秒）、配置检查（20 秒）和后续 `bridge.initialize`（30 秒）各有独立时限；较长等待也可能延长连接关闭等待。600 秒是策略上限。
 

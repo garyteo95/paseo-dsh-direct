@@ -7,6 +7,8 @@ export interface DshSettingsValues {
   profile?: string;
   /** Whole seconds as typed; blank keeps the launcher default. */
   startupTimeoutSeconds?: string;
+  /** Whether Paseo offers DSH's built-in DeepSeek models for new sessions. Unset hides them. */
+  showBuiltInDeepSeekModels?: boolean;
 }
 
 export { DEFAULT_STARTUP_TIMEOUT_SECONDS, MAX_STARTUP_TIMEOUT_SECONDS } from "./startup-timeout.js";
@@ -31,6 +33,7 @@ export const DSH_SETTINGS = defineSettings({
      * edits every field as a string; the server parses it into milliseconds.
      */
     startupTimeoutSeconds: z.string().optional(),
+    showBuiltInDeepSeekModels: z.boolean().optional(),
   }),
 });
 

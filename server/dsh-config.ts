@@ -12,6 +12,7 @@ export interface DshConfigured {
    * settings screen. Undefined means the launcher default.
    */
   startupTimeoutMs?: number;
+  showBuiltInDeepSeekModels?: boolean;
 }
 
 const nonBlank = (value: string | undefined): string | undefined => value?.trim() || undefined;
@@ -57,6 +58,7 @@ export function mergeDshConfigured(
     ...(executable ? { executable } : {}),
     ...(profile ? { profile } : {}),
     ...(startupTimeout.milliseconds === undefined ? {} : { startupTimeoutMs: startupTimeout.milliseconds }),
+    showBuiltInDeepSeekModels: settings?.showBuiltInDeepSeekModels === true,
   };
 }
 
