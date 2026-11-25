@@ -38,4 +38,8 @@ Paseo RPC 的 revision 同时绑定有效 executable、profile、DSH home 和配
 
 主 agent 落实全部正确性项；未采纳会增加动态分派或 DSH runtime 依赖的改写。服务端和客户端 reviewer 对整改版本复核通过。
 
-随后独立 code review 发现并推动六项加固：revision 绑定 canonical `value`、`base`、`user` 内容；runtime catalogue 只补全已配置模型；Git source 同时在共享 schema 和 bridge 边界拒绝 credential、query 与 fragment；异步插件 status/cancel 保留创建 request 的 bridge；provider 删除与模型目录刷新分开报告部分成功；credential 部分失败后客户端采用服务端返回的新 revision。复核确认没有剩余的阻断或高优先级问题。
+### 独立复核
+
+最终代码候选提交是 `7789ee8`。独立 code review 发现并推动六项加固：revision 绑定 canonical `value`、`base`、`user` 内容；runtime catalogue 只补全已配置模型；Git source 同时在共享 schema 和 bridge 边界拒绝 credential、query 与 fragment；异步插件 status/cancel 保留创建 request 的 bridge；provider 删除与模型目录刷新分开报告部分成功；credential 部分失败后客户端采用服务端返回的新 revision。修正后的复核没有剩余阻断或高优先级问题。
+
+独立 test/acceptance audit 核对 A02、A05、A09 和 A16 的实现、测试与文案。补齐插件 `true → false` toggle 测试，并把模型目录刷新准确限定为已接线且通过 typecheck；最终复核没有证据不一致。全量结果是 367 tests、364 passed、3 skipped、0 failed，定向管理测试 13/13 通过。
