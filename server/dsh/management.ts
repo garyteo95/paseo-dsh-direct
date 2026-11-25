@@ -71,7 +71,7 @@ export function validateManagementParams(method: string, value: Record<string, u
         if (typeof value.name !== "string" || !PACKAGE_NAME.test(value.name)) throw new Error("Invalid package name");
         if (value.version !== undefined && (typeof value.version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(value.version))) throw new Error("Invalid package version");
       } else if (value.source === "git") {
-        if (typeof value.url !== "string" || !/^https:\/\/[^#\s]+$/.test(value.url)) throw new Error("Invalid Git URL");
+        if (typeof value.url !== "string" || !safeGitUrl(value.url)) throw new Error("Invalid Git URL");
         if (value.ref !== undefined && (typeof value.ref !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(value.ref))) throw new Error("Invalid Git ref");
       }
       else throw new Error("Invalid plugin source");
@@ -110,6 +110,25 @@ function sanitize(error: unknown): string {
   return code ? `DSH operation failed (${code})` : "DSH operation failed";
 }
 
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, child]) => [key, canonical(child)]));
+  }
+  return value;
+}
+
+function safeGitUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
 export function classifyManagementError(error: unknown): ManagementFailureKind {
   const value = object(error);
   const code = `${text(value.code) ?? ""} ${typeof value.status === "number" ? value.status : ""} ${text(value.message) ?? ""}`.toUpperCase();
@@ -123,11 +142,12 @@ export function classifyManagementError(error: unknown): ManagementFailureKind {
 }
 
 function revisionOf(descriptor: HostSettingsDescriptor): string {
-  return createHash("sha256").update(JSON.stringify({
+  return createHash("sha256").update(JSON.stringify(canonical({
     ns: descriptor.ns,
-    revision: descriptor.revision,
+    value: descriptor.value,
+    base: descriptor.base,
     user: descriptor.user,
-  })).digest("hex");
+  }))).digest("hex");
 }
 
 function protocolsFrom(schema: unknown): string[] {
@@ -223,15 +243,11 @@ export class DshManagement {
       }).filter((model): model is NonNullable<typeof model> => model !== undefined) : [];
       let models: ManagementView["providers"][number]["models"] = configuredModels;
       try {
-        const merged = new Map(configuredModels.map((model) => [model.id, { ...model }]));
-        for (const model of await llm.listModels(id)) {
-          merged.set(model.id, {
-            ...merged.get(model.id),
-            id: model.id,
-            ...(model.name ? { name: model.name } : {}),
-          });
-        }
-        models = [...merged.values()];
+        const runtimeModels = new Map((await llm.listModels(id)).map((model) => [model.id, model]));
+        models = configuredModels.map((model) => ({
+          ...model,
+          ...(runtimeModels.get(model.id)?.name ? { name: runtimeModels.get(model.id)!.name } : {}),
+        }));
         for (const model of models) {
           try {
             const info = await llm.resolveModelInfo?.(id, model.id);

@@ -338,9 +338,12 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
         result.diagnostic,
       ].filter(Boolean).join(" · ");
       setProviderFeedback(notices || "Provider saved and read back from DSH");
-      if (result.credentialApplied === "applied") {
-        setProviderEditor((draft) => draft && ({ ...draft, credentialAction: "keep", apiKey: "" }));
-      }
+      setProviderEditor((draft) => draft && ({
+        ...draft,
+        profile: result.view.profile,
+        revision: result.view.revision,
+        ...(result.credentialApplied === "applied" ? { credentialAction: "keep" as const, apiKey: "" } : {}),
+      }));
       const partial = !result.settingsApplied || result.credentialApplied === "failed" || result.catalogRefreshed === false;
       if (partial) setProviderError("The operation completed only partially. Review the result before retrying.");
       else {
@@ -403,7 +406,7 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
     setProviderBusy("Removing provider");
     setProviderError(null);
     try {
-      const view = await removeProviderRpc({
+      const result = await removeProviderRpc({
         profile: providerRemove.profile,
         revision: providerRemove.revision,
         id: providerRemove.provider.id,
@@ -412,8 +415,9 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
         // of that uncertainty in the removal modal.
         confirmActiveSessions: true,
       });
-      queryClient.setQueryData(managementKey, view);
-      setProviderFeedback(`Removed ${providerRemove.provider.displayName}; unrelated routes were preserved`);
+      queryClient.setQueryData(managementKey, result.view);
+      setProviderFeedback(`Removed ${providerRemove.provider.displayName}; unrelated routes were preserved${result.catalogRefreshed ? "" : ` · ${result.catalogDiagnostic ?? "picker refresh failed"}`}`);
+      if (!result.catalogRefreshed) setProviderError("The provider was removed, but the model picker did not refresh. Refresh it before starting a new session.");
       setProviderRemove(null);
       toast.show("Model provider removed", { variant: "success" });
     } catch (error) {
@@ -437,8 +441,8 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
             : await removePluginCall(target);
       applyPluginChange(result, `${action} ${plugin.name}`);
       setPluginConfirm(null);
-      if (isPendingPluginChange(result)) toast.show(`DSH plugin ${action} started`, { variant: "success" });
-      else if (result.application !== "failed") toast.show(`DSH plugin ${action} complete`, { variant: "success" });
+      if (isPendingPluginChange(result)) toast.show("DSH plugin operation started", { variant: "success" });
+      else if (result.application !== "failed") toast.show("DSH plugin operation completed", { variant: "success" });
     } catch (error) {
       setPluginError(errorMessage(error));
     } finally {
@@ -512,7 +516,7 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
         {probeConfirm?.kind === "discover" && <>
           <SettingsRow label="Confirm credential destination" hint={`DSH will query ${probeConfirm.input.baseURL || "the selected provider's default endpoint"} and may use that provider's saved credential.${probeConfirm.input.apiKey ? " The new credential will be sent to that endpoint." : ""} No inference request is sent.`} />
           <SettingsAction label="Fetch catalogue from this endpoint" actionLabel="Fetch" onPress={() => void discoverModels()} disabled={busy} />
-          <SettingsAction label="Do not send the credential" actionLabel="Cancel" onPress={() => setProbeConfirm(null)} disabled={busy} />
+          <SettingsAction label="Cancel catalogue fetch" actionLabel="Cancel" onPress={() => setProbeConfirm(null)} disabled={busy} />
         </>}
       </SettingsSection>
       {modelEditor && (
@@ -613,7 +617,7 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
               <SettingsRow label={providerRemove.provider.activeDependenciesKnown ? `${providerRemove.provider.activeSessionIds.length} active session dependencies` : "Active dependencies are unknown"} error={!providerRemove.provider.activeDependenciesKnown ? "DSH could not confirm every active dependency. Removal may make stored selections unavailable." : undefined} />
               {removalTargetChanged && <SettingsRow label="DSH target changed" error="Close this confirmation and review the provider again before removing it." />}
               {providerError && <SettingsRow label="Removal failed" error={providerError} />}
-              <SettingsAction label="Remove provider after a fresh revision/dependency check" actionLabel={providerBusy ? "Removing" : "Remove"} onPress={() => void confirmProviderRemoval()} disabled={busy || removalTargetChanged} />
+              <SettingsAction label="Remove provider despite unknown dependencies" hint="The revision is rechecked; dependencies in other DSH processes remain unknown." actionLabel={providerBusy ? "Removing" : "Remove"} onPress={() => void confirmProviderRemoval()} disabled={busy || removalTargetChanged} />
               <SettingsAction label="Keep provider" actionLabel="Cancel" onPress={() => setProviderRemove(null)} disabled={busy} />
             </SettingsSection>
           </>}

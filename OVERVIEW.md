@@ -12,7 +12,7 @@ Runs DeepSeek Harness (`dsh`) as a native Paseo agent provider. Paseo clients (d
 - Incremental streaming for assistant text and reasoning ("thinking"), batched across concurrent sessions so parallel subagents stay smooth.
 - Tool calls with Paseo approval prompts, inline rendering of tool-returned images (such as `read_image`), full Markdown plan review cards, and `dsh` user questions answered from the Paseo UI.
 - Native DSH subagents shown in Paseo's subsession track, panels, and parent launch cards, with subagent model allowlist controls on the plugin settings screen.
-- Host-side model provider, write-only credential, model catalogue, and DSH runtime bundle management from the same settings screen, backed by the selected DSH profile's native services.
+- Host-side model provider, masked host-stored credential, model catalogue, and DSH runtime bundle management from the same settings screen, backed by the selected DSH profile's native services.
 - Create, import, resume, cancel, and close sessions (preserving native DSH session IDs); model, preset, reasoning, permission, and plan-mode controls from the Paseo UI.
 - DSH slash commands and skills in Paseo's `/` menu, plus stdio and streamable HTTP MCP server passthrough from Paseo into DSH.
 - Token usage and context-window fill in Paseo's usage meter, timeline cards for goal/plan/permission/compaction events, and per-turn and per-session provider metrics on Paseo 0.17.2 and later.

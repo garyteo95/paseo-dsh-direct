@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { HostBundleInfo, HostContext, HostServices } from "./host.js";
 import { classifyManagementError, DshManagement, validateManagementParams } from "./management.js";
+import { pluginInstallSchema } from "../../shared/management.js";
 
 function fixture(options: {
   credentialFailure?: Error;
@@ -97,6 +98,7 @@ function fixture(options: {
     management: new DshManagement(ctx, "test"),
     receivedSecret: () => receivedSecret,
     providers: () => structuredClone(providers),
+    setProviders(value: Record<string, unknown>) { providers = value; },
     unsetRefs,
     pluginCalls,
     setBundles(value: typeof bundles) { bundles = value; },
@@ -112,6 +114,20 @@ test("read separates configured routes from addable catalog rows and preserves d
   assert.equal(view.providers[0]?.models[0]?.id, "saved-model");
   assert.equal(view.providers[0]?.activeDependenciesKnown, false);
   assert.equal(view.credentialScope, "Shared DSH home credential store");
+});
+
+test("provider create and delete preserve an unrelated configured route", async () => {
+  const { management } = fixture();
+  const before = await management.read();
+  const created = await management.upsert({
+    profile: "test", revision: before.revision, id: "candidate", displayName: "Candidate",
+    api: "openai-completions", models: [{ id: "candidate-model" }], credential: { action: "keep" },
+  });
+  assert.deepEqual(created.view.providers.map((provider) => provider.id).sort(), ["candidate", "current"]);
+  const removed = await management.remove({
+    profile: "test", revision: created.view.revision, id: "candidate", confirmActiveSessions: true,
+  });
+  assert.deepEqual(removed.providers.map((provider) => provider.id), ["current"]);
 });
 
 test("provider write reports a credential-stage failure without returning the secret or losing unknown settings", async () => {
@@ -131,7 +147,10 @@ test("provider write reports a credential-stage failure without returning the se
 });
 
 test("runtime catalogue data augments configured metadata and provider-specific model fields survive edits", async () => {
-  const { management, providers } = fixture({ runtimeModels: [{ id: "saved-model", name: "Runtime name" }] });
+  const { management, providers } = fixture({ runtimeModels: [
+    { id: "saved-model", name: "Runtime name" },
+    { id: "catalogue-only", name: "Catalogue only" },
+  ] });
   const before = await management.read();
   const model = before.providers[0]!.models[0]!;
   assert.equal(model.name, "Runtime name");
@@ -139,12 +158,27 @@ test("runtime catalogue data augments configured metadata and provider-specific 
   assert.equal(model.maxTokens, 1024);
   assert.deepEqual(model.inputModalities, ["text"]);
   assert.deepEqual(model.reasoningEfforts, [{ id: "high", value: "high" }]);
+  assert.deepEqual(before.providers[0]!.models.map((row) => row.id), ["saved-model"]);
   await management.upsert({
     profile: "test", revision: before.revision, id: "current", displayName: "Edited",
     api: "openai-completions", models: [model], credential: { action: "keep" },
   });
   const raw = providers().current as { models: Array<Record<string, unknown>> };
   assert.equal(raw.models[0]?.providerExtension, "preserved");
+});
+
+test("model discovery, connection checks and explicit model removal use native provider state", async () => {
+  const { management, providers } = fixture();
+  const before = await management.read();
+  const discovery = await management.discover({ profile: "test", revision: before.revision, provider: "current" });
+  assert.deepEqual(discovery.models.map((model) => model.id), ["discovered"]);
+  assert.equal((await management.test({ profile: "test", revision: before.revision, provider: "current", model: "discovered" })).ok, true);
+  assert.equal((await management.test({ profile: "test", revision: before.revision, provider: "current", model: "missing" })).category, "unavailable-model");
+  await management.upsert({
+    profile: "test", revision: before.revision, id: "current", displayName: "Current",
+    api: "openai-completions", models: [], credential: { action: "keep" },
+  });
+  assert.deepEqual((providers().current as { models: unknown[] }).models, []);
 });
 
 test("removing a stored credential invokes the native unset service instead of reporting a no-op", async () => {
@@ -159,10 +193,12 @@ test("removing a stored credential invokes the native unset service instead of r
 });
 
 test("stale revisions and unconfirmed removal fail before a destructive write", async () => {
-  const { management } = fixture();
+  const { management, providers, setProviders } = fixture();
   await assert.rejects(() => management.remove({ profile: "test", revision: "stale", id: "current", confirmActiveSessions: true }), /changed/);
   const view = await management.read();
   await assert.rejects(() => management.remove({ profile: "test", revision: view.revision, id: "current", confirmActiveSessions: false }), /confirm removal/);
+  setProviders({ ...providers(), current: { ...(providers().current as object), displayName: "Changed elsewhere" } });
+  await assert.rejects(() => management.remove({ profile: "test", revision: view.revision, id: "current", confirmActiveSessions: true }), /changed/);
 });
 
 test("bridge validation rejects secret whitespace and command-shaped plugin fields", () => {
@@ -175,6 +211,24 @@ test("bridge validation rejects secret whitespace and command-shaped plugin fiel
   assert.doesNotThrow(() => validateManagementParams("management.plugins.install", {
     profile: "test", revision: "r", source: "git", url: "https://example.invalid/org/repo.git", ref: "v1.0.0", enable: false,
   }));
+  for (const url of ["https://user:secret@example.invalid/repo.git", "https://example.invalid/repo.git?token=secret"]) {
+    assert.throws(() => validateManagementParams("management.plugins.install", {
+      profile: "test", revision: "r", source: "git", url, ref: "v1.0.0", enable: false,
+    }), /Git URL/);
+    assert.equal(pluginInstallSchema.safeParse({ profile: "test", revision: "r", source: "git", url, enable: false }).success, false);
+  }
+});
+
+test("Git plugin installation delegates a credential-free structured spec", async () => {
+  const { management, pluginCalls } = fixture();
+  const view = await management.readPlugins();
+  await management.installPlugin({
+    profile: "test", revision: view.revision, source: "git",
+    url: "https://example.invalid/org/repo.git", ref: "abc123", enable: false,
+  });
+  assert.deepEqual(pluginCalls[0], [
+    "install", "https://example.invalid/org/repo.git#abc123", { enabled: false, saveExact: true },
+  ]);
 });
 
 test("connection failures are classified without echoing endpoint or credential details", () => {
@@ -193,6 +247,8 @@ test("plugin lifecycle delegates only structured operations and reads back every
 
   let change = await management.togglePlugin({ profile: "test", revision: view.revision, name: "safe-bundle", enabled: true });
   assert.equal(change.view.plugins[0]?.enabled, true);
+  change = await management.togglePlugin({ profile: "test", revision: change.view.revision, name: "safe-bundle", enabled: false });
+  assert.equal(change.view.plugins[0]?.enabled, false);
   change = await management.updatePlugin({ profile: "test", revision: change.view.revision, name: "safe-bundle" });
   assert.equal(change.application, "restart-required");
   assert.equal(change.view.plugins[0]?.version, "1.1.0");
@@ -200,7 +256,9 @@ test("plugin lifecycle delegates only structured operations and reads back every
   assert.ok(change.view.plugins.some((plugin) => plugin.name === "new-bundle"));
   change = await management.removePlugin({ profile: "test", revision: change.view.revision, name: "new-bundle" });
   assert.ok(!change.view.plugins.some((plugin) => plugin.name === "new-bundle"));
-  assert.deepEqual(pluginCalls[2], ["install", "@scope/new@1.2.3", { enabled: true, saveExact: true }]);
+  assert.ok(pluginCalls.some((call) => JSON.stringify(call) === JSON.stringify([
+    "install", "@scope/new@1.2.3", { enabled: true, saveExact: true },
+  ])));
 
   setBundles([{ name: "safe-bundle", version: "1.1.0", enabled: true, installed: true, removable: true, update: { version: "1.2.0" } }]);
   view = await management.readPlugins();

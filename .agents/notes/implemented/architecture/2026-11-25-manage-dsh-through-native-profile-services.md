@@ -28,3 +28,14 @@ Paseo RPC 的 revision 同时绑定有效 executable、profile、DSH home 和配
 ## 怎么验证的
 
 共享 schema 和 bridge 双层校验覆盖 secret 字符、provider id、registry/Git 安装来源与额外字段。服务端测试覆盖 configured/addable 分离、失效 route 的模型回显、revision 冲突、credential 部分失败、删除确认、命令注入拒绝，以及 executable/profile 切换后的旧草稿拒绝。Windows bundled DSH `0.2.3-alpha.2` 使用临时 DSH home 完成 bridge smoke；生产 profile 只读。
+
+候选提交 `70cc625` 完成四路独立 simplify。
+
+- 服务端审查促成异步插件 status/cancel 脱离 bundle revision、删除重复 snapshot 和收窄 host contract。
+- 客户端审查促成 credential destination 快照确认、持续 operation polling、删除目标绑定及完整 metadata 编辑。
+- 契约审查合并 provider/plugin operation schema 并删除死字段。
+- 综合审查补出 runtime metadata 与 provider 专属 model 字段的保留，以及 credential unset 的真实 native 调用。
+
+主 agent 落实全部正确性项；未采纳会增加动态分派或 DSH runtime 依赖的改写。服务端和客户端 reviewer 对整改版本复核通过。
+
+随后独立 code review 发现并推动六项加固：revision 绑定 canonical `value`、`base`、`user` 内容；runtime catalogue 只补全已配置模型；Git source 同时在共享 schema 和 bridge 边界拒绝 credential、query 与 fragment；异步插件 status/cancel 保留创建 request 的 bridge；provider 删除与模型目录刷新分开报告部分成功；credential 部分失败后客户端采用服务端返回的新 revision。复核确认没有剩余的阻断或高优先级问题。

@@ -39,3 +39,51 @@ test("management access binds direct and nested revisions to the launch target",
   assert.equal(opens, 2);
   await access.dispose();
 });
+
+test("pending plugin status and cancellation stay on the bridge that owns the operation", async () => {
+  let opens = 0;
+  let closes = 0;
+  const plugins = (revision: string) => ({
+    supported: true as const,
+    hostLabel: "Paseo daemon host" as const,
+    profile: "one",
+    revision,
+    plugins: [],
+  });
+  const access = createManagementAccess({
+    target: async () => ({ configured: { executable: "dsh", profile: "one" } }),
+    open: async () => {
+      const bridgeId = ++opens;
+      return {
+        request: async (method: string) => {
+          if (method === "management.plugins.read") return plugins("native-1");
+          assert.equal(bridgeId, 2);
+          if (method === "management.plugins.install" || method === "management.plugins.status") {
+            return { changed: false, application: "applied", requestId: "request-1", view: plugins("native-1") };
+          }
+          if (method === "management.plugins.cancel") {
+            return { changed: true, application: "cancelled", view: plugins("native-1") };
+          }
+          throw new Error(`Unexpected method ${method}`);
+        },
+        close: async () => { closes++; },
+      } as unknown as DshBridge;
+    },
+  });
+  const initial = await access.run("management.plugins.read", {});
+  const installed = await access.run("management.plugins.install", {
+    profile: "one", revision: initial.revision, source: "registry", name: "safe-bundle", enable: false,
+  }, true);
+  const status = await access.run("management.plugins.status", {
+    profile: "one", revision: installed.view.revision, requestId: "request-1",
+  }, true);
+  await access.run("management.plugins.cancel", {
+    profile: "one", revision: status.view.revision, requestId: "request-1",
+  }, true);
+  assert.equal(opens, 2);
+  assert.equal(closes, 2);
+  await assert.rejects(() => access.run("management.plugins.status", {
+    profile: "one", revision: status.view.revision, requestId: "request-1",
+  }, true), /no longer attached/);
+  await access.dispose();
+});

@@ -99,6 +99,12 @@ export const managementRemoveSchema = z.object({
   confirmActiveSessions: z.boolean(),
 });
 export type ManagementRemove = z.infer<typeof managementRemoveSchema>;
+export const providerRemovalResultSchema = z.object({
+  view: managementViewSchema,
+  catalogRefreshed: z.boolean(),
+  catalogDiagnostic: z.string().optional(),
+});
+export type ProviderRemovalResult = z.infer<typeof providerRemovalResultSchema>;
 
 export const modelDiscoverySchema = z.object({
   profile: nonempty,
@@ -133,7 +139,7 @@ export const upsertProvider = defineRpc({
 export const removeProvider = defineRpc({
   name: "dsh-management.provider.remove",
   input: managementRemoveSchema,
-  output: managementViewSchema,
+  output: providerRemovalResultSchema,
 });
 export const discoverProviderModels = defineRpc({
   name: "dsh-management.provider.discover",
@@ -149,6 +155,9 @@ export const testProvider = defineRpc({
 const pluginApplicationSchema = z.enum([
   "applied", "restart-required", "overridden", "failed", "cancelled",
 ]);
+function safeGitUrl(value: string): boolean {
+  return /^https:\/\/[^/?#@\s]+(?:\/[^?#\s]*)?$/.test(value);
+}
 const pluginSchema = z.object({
   name: nonempty,
   version: z.string().optional(),
@@ -181,10 +190,11 @@ export const pluginChangeSchema = z.object({
 });
 export type PluginChange = z.infer<typeof pluginChangeSchema>;
 const packageName = nonempty.regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i, "Invalid package name");
+const gitUrl = z.string().url().refine(safeGitUrl, "Git URL must be HTTPS and must not contain credentials, query parameters or fragments");
 const pluginTarget = { profile: nonempty, revision: nonempty };
 export const pluginInstallSchema = z.discriminatedUnion("source", [
   z.object({ ...pluginTarget, source: z.literal("registry"), name: packageName, version: nonempty.regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/).optional(), enable: z.boolean() }),
-  z.object({ ...pluginTarget, source: z.literal("git"), url: z.string().url().regex(/^https:\/\/[^#\s]+$/), ref: nonempty.regex(/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/).optional(), enable: z.boolean() }),
+  z.object({ ...pluginTarget, source: z.literal("git"), url: gitUrl, ref: nonempty.regex(/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/).optional(), enable: z.boolean() }),
 ]);
 export type PluginInstall = z.infer<typeof pluginInstallSchema>;
 export const pluginActionSchema = z.object({ ...pluginTarget, name: packageName });

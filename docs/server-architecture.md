@@ -89,7 +89,7 @@ Paseo 在调用插件之前就按 `PATH` 解析注册的 `command`，找不到�
 
 ### DSH 管理桥
 
-provider、model、credential 与 runtime bundle 管理复用有效 executable/profile 启动短生命周期 bridge。provider 与 model 只经 DSH `settings` 服务的 `llm-pi-ai.providers` volatile 路径读写；credential 只经 `describe/set/unset`；bundle 只经 `pluginManager`。Paseo 不保存第二份管理状态，也不执行任意 package-manager 命令。每个写操作带 DSH revision，并按 profile 串行；写后 read-back，provider 变化再刷新 `dsh-pi` 模型目录。接口和失败语义见 [DSH 管理](dsh-management.md)。
+provider、model、credential 与 runtime bundle 管理复用有效 executable/profile 启动管理 bridge。普通读写完成后关闭 bridge；异步 bundle 操作则保留创建该 request ID 的同一 bridge，直到完成或取消。provider 与 model 只经 DSH `settings` 服务的 `llm-pi-ai.providers` volatile 路径读写；credential 只经 `describe/set/unset`；bundle 只经 `pluginManager`。Paseo 不保存第二份管理状态，也不执行任意 package-manager 命令。每个写操作带 DSH revision，并按 profile 串行；写后 read-back，provider 变化再刷新 `dsh-pi` 模型目录。接口和失败语义见 [DSH 管理](dsh-management.md)。
 
 ### 漂移防护
 

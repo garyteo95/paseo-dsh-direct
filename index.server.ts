@@ -86,8 +86,12 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(removeProvider, async (input, { paseo }) => {
     const view = await management.run("management.provider.remove", input, true);
-    await refreshLaunch(paseo);
-    return view;
+    try {
+      await refreshLaunch(paseo);
+      return { view, catalogRefreshed: true };
+    } catch {
+      return { view, catalogRefreshed: false, catalogDiagnostic: "Provider removed, but the Paseo model catalog could not refresh." };
+    }
   });
   server.handle(discoverProviderModels, (input) => management.run("management.provider.discover", input));
   server.handle(testProvider, (input) => management.run("management.provider.test", input));

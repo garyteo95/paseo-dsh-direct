@@ -6,7 +6,7 @@
 
 - 基线提交：`b3c58d571b611950c28e29a9e360a99938c0f3e4`。
 - 开发分支：`feature/dsh-management`。
-- 已安装 DSH Desktop/bundled CLI：`0.2.3-alpha.2`。Windows bundled CLI 在临时 DSH home 上完成 bridge initialize、模型目录和 session history smoke，不依赖 WSL 或 PATH 修改。
+- 已安装 DSH Desktop/bundled CLI：`0.2.3-alpha.2`。Windows bundled CLI 在临时 DSH home 上完成 bridge initialize、模型目录和 session list smoke，不依赖 WSL 或 PATH 修改。
 - 安装版 `paseo` profile 提供 `settings`、`credentials-local`、`llm-pi-ai` 和 `plugin-manager` 原生服务。管理实现只调用这些服务，不复制 `desktop` profile，也不使用 private Desktop RPC。
 - 安装目录中 OpenCode Go route 的目标模型是 `deepseek-v4.1-flash`，协议是 `openai-completions`，endpoint catalogue 是 `https://opencode.ai/inference/go/v1`。公开说明见 [OpenCode Go](https://opencode.ai/docs/console/go/)。
 - 安装目录中 Z.AI route 的目标模型是 `glm-5.3`，协议是 `openai-completions`，endpoint 是 `https://api.z.ai/api/coding/paas/v4`。模型能力以 DSH 实际目录为准；公开说明见 [GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3)。这些值来自审计，不硬编码进插件。
@@ -20,7 +20,7 @@
 | A02 | Blocked | 自动化覆盖 provider 新增/编辑/删除、DSH revision 冲突、write read-back、保留未知字段和无关 route。尚未获准通过真实 Paseo UI 写入 disposable/production profile。 |
 | A03 | Blocked | 客户端只发送一次新值；服务端只调用 `credentials.set/unset/describe`，不调用 secret resolve；响应和错误不回显 secret；配置成功而 credential 失败会报告部分成功。真实轮换后下一请求使用新 key 尚未授权验证。 |
 | A04 | Blocked | 非 inference catalogue test 标注 `billable: false`，自动化区分 invalid credential、unreachable、protocol、model 和 rate limit，并清理错误正文。有效/无效真实 endpoint 检查需要用户在 UI 输入 key；真实 inference 另行披露可能计费。 |
-| A05 | Blocked | 手工模型 CRUD、catalogue discovery、metadata、写后目录刷新及 subagent 显式 allowlist 保留已实现并有 contract 测试。尚未通过真实 Paseo UI 和 DSH profile 完成整个生命周期。installed DSH schema 没有独立 model enable flag，因此界面不伪造该能力。 |
+| A05 | Blocked | 手工模型 CRUD、catalogue discovery、metadata 及 subagent 显式 allowlist 保留已实现并有 contract 测试；写后目录刷新已接线并通过类型检查。尚未通过真实 Paseo UI 和 DSH profile 完成整个生命周期。installed DSH schema 没有独立 model enable flag，因此界面不伪造该能力。 |
 | A06 | Blocked | 已核对两个目标 route 的 installed catalogue 和官方文档；未取得真实 API key，也未获准产生可能计费的 inference 请求。 |
 | A07 | Blocked | 既有 Provider 保留 native agent/session ID、history、cwd 和 session resume；模型 configure 与恢复路径有回归测试。DeepSeek → GLM → DeepSeek 的真实同一 session 执行仍依赖 A06。 |
 | A08 | Blocked | 既有执行层 allowlist、removed/unavailable route 保留、catalogue 新增不自动授权均有回归测试。两个真实模型互作 parent/worker 的矩阵依赖 A06 和用户 profile。 |
@@ -31,7 +31,7 @@
 | A13 | Blocked | 同 profile 写操作在 Daemon 串行，DSH settings CAS 拒绝 stale draft；删除因跨进程依赖未知而强制明确确认；reload 文档要求从 active turn 外执行。真实 active session 并发编辑尚未授权。 |
 | A14 | Blocked | 设置页使用 Paseo 跨平台 UI API，不使用 DOM/Node；host/profile/trust boundary 和 masked-only credential 状态可见。没有可用的已授权手机设备或远程 Paseo 连接进行验收。 |
 | A15 | Blocked | settings 原生 CAS、写后 read-back、credential 部分失败、plugin 原生结果、保留 credential/session 和 Windows rollback 步骤已实现/记录。真实失败安装和原插件来源恢复没有授权执行。 |
-| A16 | Pass | `npm run build`、`npm run typecheck`、`npm test`、`npm run verify:notes` 和 `npm run verify:docs` 均为必跑门禁；新增测试覆盖 management bridge、secret sanitization、revision binding、provider failure path、plugin lifecycle 和 Windows fixtures。最终提交前重复运行并以该次结果为准。 |
+| A16 | Pass | 最终门禁全部通过：367 tests，364 passed，3 skipped，0 failed；build、typecheck、notes、docs 和 diff checks 均通过。新增测试覆盖 management bridge、secret sanitization、revision binding、provider failure path、plugin lifecycle 和 Windows fixtures。 |
 
 ## 结论
 

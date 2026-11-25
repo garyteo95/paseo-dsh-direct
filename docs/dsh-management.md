@@ -18,7 +18,7 @@ credential store 属于同一个 DSH home，不按 profile 隔离。复用同一
 
 ## DSH plugins
 
-`DSH plugins` 与 Paseo 自己的插件管理器分开。页面列出当前 profile 的 bundle、版本、启用状态、更新能力、错误和应用结果。DSH 未报告更新版本时，页面显示未知，不把它误报为已是最新版；registry bundle 仍可显式要求 DSH 检查并更新。安装只接受结构化的 registry package 或 HTTPS Git source；服务端不接受 pnpm 参数、shell 命令、本地 tarball 路径或任意 argv。启用、禁用、更新和删除均调用 DSH `pluginManager`，同一 profile 的变更串行，并显示 `applied`、`restart-required`、`overridden`、`failed` 或 `cancelled`。
+`DSH plugins` 与 Paseo 自己的插件管理器分开。页面列出当前 profile 的 bundle、版本、启用状态、更新能力、错误和应用结果。DSH 未报告更新版本时，页面显示未知，不把它误报为已是最新版；registry bundle 仍可显式要求 DSH 检查并更新。安装只接受结构化的 registry package 或不含 userinfo、query、fragment 的 HTTPS Git source；服务端不接受 pnpm 参数、shell 命令、本地 tarball 路径或任意 argv。启用、禁用、更新和删除均调用 DSH `pluginManager`，同一 profile 的变更串行，并显示 `applied`、`restart-required`、`overridden`、`failed` 或 `cancelled`。异步操作的 status/cancel 复用创建 request ID 的同一 bridge；插件进程重启后不伪装成仍可取消，页面改为要求刷新实际 bundle 状态。
 
 bundle 注册的 DSH browser 组件不会自动成为 Paseo UI。运行时插件可以在 Paseo 启动的 DSH 中工作；仅提供 toast、Desktop Notification、Dock badge 等 DSH client 功能的 bundle 在 Paseo 中没有对应呈现。Git bundle 没有原生“最新版本”查询，更新需要调用方提供同仓库的固定 commit。
 
