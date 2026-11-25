@@ -26,7 +26,7 @@ describe("resolveDshHome", () => {
   it("follows DSH_HOME, ignores a blank value, and expands a tilde", () => {
     assert.equal(resolveDshHome({}), path.join(homedir(), ".dsh"));
     assert.equal(resolveDshHome({ DSH_HOME: "   " }), path.join(homedir(), ".dsh"));
-    assert.equal(resolveDshHome({ DSH_HOME: "/srv/dsh/" }), "/srv/dsh");
+    assert.equal(resolveDshHome({ DSH_HOME: "/srv/dsh/" }), path.resolve("/srv/dsh"));
     assert.equal(resolveDshHome({ DSH_HOME: "~/alt" }), path.join(homedir(), "alt"));
   });
 });
@@ -68,20 +68,25 @@ describe("ensureDshProfile", () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-dsh-profile-test-"));
     const home = path.join(root, "home");
     const log = path.join(root, "calls.log");
-    const executable = path.join(root, "fake-dsh");
+    const executable = path.join(root, process.platform === "win32" ? "fake-dsh.cmd" : "fake-dsh");
+    const script = process.platform === "win32"
+      ? path.join(root, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
+      : executable;
+    await mkdir(path.dirname(script), { recursive: true });
+    if (process.platform === "win32") await writeFile(executable, "@echo off\r\n");
     // Records its arguments and creates the profile directory like `dsh --from-default-profile`.
     await writeFile(
-      executable,
-      `#!/bin/sh\necho "$@" >> "${log}"\nmkdir -p "$DSH_HOME/profiles/$2"\necho tree\n`,
+      script,
+      `#!/usr/bin/env node\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst args = process.argv.slice(2);\nfs.appendFileSync(${JSON.stringify(log)}, args.join(" ") + "\\n");\nconst profile = args[args.indexOf("--profile") + 1];\nfs.mkdirSync(path.join(process.env.DSH_HOME, "profiles", profile), { recursive: true });\nconsole.log("tree");\n`,
     );
-    await chmod(executable, 0o755);
-    return { root, home, log, executable, env: { ...process.env, DSH_HOME: home } };
+    await chmod(script, 0o755);
+    return { root, home, log, executable, script, env: { ...process.env, DSH_HOME: home } };
   }
 
   it("aborts profile creation and waits until its child has exited", async () => {
     const f = await fixture();
     const record = path.join(f.root, "profile-child.json");
-    await writeFile(f.executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(record)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
+    await writeFile(f.script, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(record)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
     const controller = new AbortController();
     try {
       const creating = ensureDshProfile({ executable: f.executable, profile: DEFAULT_PROFILE, env: f.env, signal: controller.signal });

@@ -1,4 +1,12 @@
 import type { SubagentSettingsSave, SubagentSettingsView } from "./subagent-settings.js";
+import type {
+  ManagementRemove,
+  ManagementTest,
+  ManagementUpsert,
+  ManagementView,
+  ModelDiscovery,
+  PluginsView,
+} from "./management.js";
 
 /** The package-owned JSONL boundary. No DSH or Node runtime imports. */
 export const BRIDGE_PROTOCOL_VERSION = 1 as const;
@@ -190,6 +198,24 @@ export interface CommandResult {
 }
 export interface BridgeMethods {
   "bridge.initialize": { params: {}; result: BridgeInitializeResult };
+  "management.read": { params: {}; result: ManagementView };
+  "management.provider.upsert": { params: ManagementUpsert; result: ManagementView };
+  "management.provider.remove": { params: ManagementRemove; result: ManagementView };
+  "management.provider.discover": {
+    params: ModelDiscovery;
+    result: { models: ManagementView["providers"][number]["models"]; failure?: { ok: boolean; billable: boolean; category?: string; diagnostic?: string } };
+  };
+  "management.provider.test": {
+    params: ManagementTest;
+    result: { ok: boolean; billable: boolean; category?: string; diagnostic?: string };
+  };
+  "management.plugins.read": { params: {}; result: PluginsView };
+  "management.plugins.install": { params: { spec: string; enable: boolean }; result: JsonObject };
+  "management.plugins.enable": { params: { name: string; enabled: boolean }; result: JsonObject };
+  "management.plugins.update": { params: { name: string; version?: string }; result: JsonObject };
+  "management.plugins.remove": { params: { name: string }; result: JsonObject };
+  "management.plugins.status": { params: { requestId: string }; result: JsonObject };
+  "management.plugins.cancel": { params: { requestId: string }; result: JsonObject };
   "subagent.settings.read": { params: {}; result: SubagentSettingsView };
   "subagent.settings.save": { params: SubagentSettingsSave; result: SubagentSettingsView };
   "session.list": {
