@@ -95,7 +95,7 @@ function providerDraft(
     api: provider?.api ?? "",
     baseURL: provider?.baseURL ?? addable?.defaultBaseURL ?? "",
     models: provider?.models.map((model) => ({ ...model })) ?? [],
-    credentialAction: "keep",
+    credentialAction: !provider && !addable ? "set" : "keep",
     apiKey: "",
   };
 }
@@ -191,6 +191,7 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
   const plugins = pluginsQuery.data;
 
   const [providerEditor, setProviderEditor] = useState<ProviderDraft | null>(null);
+  const [showInstalledProviders, setShowInstalledProviders] = useState(false);
   const [modelEditor, setModelEditor] = useState<ModelDraft | null>(null);
   const [providerRemove, setProviderRemove] = useState<ProviderRemoval | null>(null);
   const [providerBusy, setProviderBusy] = useState<string | null>(null);
@@ -574,9 +575,10 @@ export default function ManagementSettings({ theme, host, launchRevision, launch
             <SettingsAction label="Remove provider" hint={provider.activeDependenciesKnown ? `${provider.activeSessionIds.length} active session dependenc${provider.activeSessionIds.length === 1 ? "y" : "ies"}` : "Active session dependencies could not be confirmed"} actionLabel="Review removal" onPress={() => { setProviderError(null); setProviderRemove({ provider, profile: management.profile, revision: management.revision, launchRevision }); }} disabled={busy || !management.supported} />
           </SettingsCard>
         ))}
-        {management?.supported && management.providers.every((provider) => !provider.configured) && <SettingsRow label="No configured model providers" hint="Add an installed provider or a custom model API." />}
-        {management?.addableProviders.map((provider) => <SettingsAction key={provider.id} label={`Add ${provider.displayName}`} hint={provider.diagnostic ?? provider.id} actionLabel="Add" onPress={() => startProviderEdit(undefined, provider)} disabled={busy} />)}
-        {management?.supported && <SettingsAction label="Add custom model API" hint="OpenAI-, Anthropic- or Gemini-compatible endpoint" actionLabel="Add" onPress={() => startProviderEdit()} disabled={busy} />}
+        {management?.supported && management.providers.every((provider) => !provider.configured) && <SettingsRow label="No configured model providers" hint="Configure the API connection and its model IDs below." />}
+        {management?.supported && <SettingsAction label="Add a model API" hint="Set the API protocol, endpoint, key and model IDs for Z.AI Coding Plan, OpenCode Go or another compatible service" actionLabel="Configure" onPress={() => startProviderEdit()} disabled={busy} />}
+        {management?.supported && management.addableProviders.length > 0 && <SettingsAction label="DSH provider catalogue" hint={showInstalledProviders ? "Hide available DSH providers" : "Optional: browse providers available from this DSH installation"} actionLabel={showInstalledProviders ? "Hide" : "Show"} onPress={() => setShowInstalledProviders((shown) => !shown)} disabled={busy} />}
+        {showInstalledProviders && management?.addableProviders.map((provider) => <SettingsAction key={provider.id} label={`Add ${provider.displayName}`} hint={provider.diagnostic ?? provider.id} actionLabel="Add" onPress={() => startProviderEdit(undefined, provider)} disabled={busy} />)}
         {providerFeedback && !providerEditor && <SettingsRow label="Last provider operation" hint={providerFeedback} />}
         {providerError && !providerEditor && <SettingsRow label="Provider operation failed" error={providerError} />}
         {managementQuery.isError && management && <SettingsRow label="Could not refresh model providers" error={errorMessage(managementQuery.error)} hint="The previous successful state is still shown" />}
